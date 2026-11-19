@@ -56,6 +56,9 @@ export const AlertIcon = (p: IconProps) => (
 export const HomeIcon = (p: IconProps) => (
   <Icon {...p}><path d="M3 11 12 4l9 7" /><path d="M5 10v10h14V10" /></Icon>
 );
+export const SearchIcon = (p: IconProps) => (
+  <Icon {...p}><circle cx="11" cy="11" r="7" /><path d="m20 20-3.5-3.5" /></Icon>
+);
 export const RefreshIcon = (p: IconProps) => (
   <Icon {...p}><path d="M20 11a8 8 0 1 0-2.3 5.7" /><path d="M20 4v7h-7" /></Icon>
 );

@@ -68,8 +68,47 @@ export interface DocumentMetadata {
   /** PDF page count; null for plain text and metadata-only documents. */
   pageCount: number | null;
   chunkCount: number | null;
+  /** Search readiness of a READY document; null before its chunks exist. */
+  indexStatus: SearchIndexStatus | null;
+  /** Note while waiting for the embedding service, or the reason indexing failed. */
+  indexDetail: string | null;
   createdAt: Instant;
   updatedAt: Instant;
+}
+
+/** com.nexusai.document.SearchIndexStatus */
+export type SearchIndexStatus = "PENDING" | "INDEXING" | "INDEXED" | "FAILED";
+
+/** com.nexusai.document.SearchCoverage */
+export interface SearchCoverage {
+  indexed: number;
+  pending: number;
+  failed: number;
+}
+
+/** com.nexusai.search.SearchResponse.Result */
+export interface SearchResult {
+  rank: number;
+  /** Cosine similarity, higher is closer (typically 0.3–0.9 for nomic-embed-text). */
+  score: number;
+  documentId: Uuid;
+  documentTitle: string;
+  documentOrigin: string | null;
+  mediaType: string | null;
+  chunkId: Uuid;
+  chunkIndex: number;
+  pageNumber: number | null;
+  charStart: number;
+  charEnd: number;
+  content: string;
+}
+
+/** com.nexusai.search.SearchResponse */
+export interface SearchResponse {
+  query: string;
+  model: string;
+  results: SearchResult[];
+  coverage: SearchCoverage;
 }
 
 /** com.nexusai.ingestion.ChunkResponse */
@@ -114,6 +153,10 @@ export const LIMITS = {
   pageSizeMax: 100,
   /** Backend default MAX_UPLOAD_SIZE (25MB). The server enforces the real limit (413). */
   uploadMaxBytes: 25 * 1024 * 1024,
+  /** SearchController: q max length, default and max result count. */
+  searchQuery: 1000,
+  searchDefaultLimit: 10,
+  searchMaxLimit: 50,
 } as const;
 
 /** File types the upload endpoint accepts (checked by extension and content server-side). */

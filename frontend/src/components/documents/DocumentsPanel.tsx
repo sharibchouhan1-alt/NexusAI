@@ -20,6 +20,8 @@ import { UploadDialog } from "./UploadDialog";
 const PAGE_SIZE = 20;
 /** While any listed document is queued or processing, the list refreshes at this interval. */
 const POLL_MS = 1500;
+/** While documents only wait for the embedding service (Ollama down), poll gently. */
+const WAITING_POLL_MS = 10_000;
 
 type Dialog =
   | { kind: "upload" }
@@ -42,18 +44,36 @@ export function DocumentsPanel({ workspaceId }: { workspaceId: Uuid }) {
   const data = documents.data;
   const { reload } = documents;
 
-  // Poll only while ingestion is in flight; stops by itself once everything has settled.
-  const inFlight = data?.items.some((d) => IN_FLIGHT_STATUSES.includes(d.status)) ?? false;
+  // Poll while work is moving (fast) or waiting on the embedding service (slow); stop once settled.
+  const inFlight =
+    data?.items.some(
+      (d) =>
+        IN_FLIGHT_STATUSES.includes(d.status) ||
+        d.indexStatus === "INDEXING" ||
+        (d.indexStatus === "PENDING" && !d.indexDetail),
+    ) ?? false;
+  const waitingForEmbeddings = data?.items.some((d) => d.indexStatus === "PENDING" && d.indexDetail) ?? false;
+  // A failed refresh (e.g. API restarting) keeps the last list on screen and keeps retrying.
+  const pollDelay = documents.error
+    ? WAITING_POLL_MS
+    : inFlight
+      ? POLL_MS
+      : waitingForEmbeddings
+        ? WAITING_POLL_MS
+        : null;
+  // Re-arms after every settled attempt: a new `data` on success, a new `error` on failure.
+  const lastError = documents.error;
   useEffect(() => {
-    if (!inFlight) return;
-    const timer = setTimeout(reload, POLL_MS);
+    if (pollDelay === null) return;
+    const timer = setTimeout(reload, pollDelay);
     return () => clearTimeout(timer);
-  }, [inFlight, data, reload]);
+  }, [pollDelay, data, lastError, reload]);
 
-  async function retry(document: DocumentMetadata) {
+  async function retry(document: DocumentMetadata, what: "ingestion" | "index") {
     setActionError(null);
     try {
-      await documentsApi.reingest(workspaceId, document.id);
+      if (what === "ingestion") await documentsApi.reingest(workspaceId, document.id);
+      else await documentsApi.reindex(workspaceId, document.id);
     } catch (error) {
       setActionError(`Couldn't retry "${document.title}": ${toApiError(error).message}`);
     }
@@ -99,13 +119,24 @@ export function DocumentsPanel({ workspaceId }: { workspaceId: Uuid }) {
         </div>
       )}
 
+      {documents.error && data && (
+        <div className="mb-4">
+          <Alert title="Couldn't refresh documents">
+            {documents.error.message} Showing the last loaded list; retrying automatically.{" "}
+            <button type="button" onClick={reload} className="font-medium underline">
+              Retry now
+            </button>
+          </Alert>
+        </div>
+      )}
+
       {documents.isLoading ? (
         <div className="space-y-2" role="status" aria-label="Loading documents">
           {Array.from({ length: 4 }, (_, i) => (
             <Skeleton key={i} className="h-14" />
           ))}
         </div>
-      ) : documents.error ? (
+      ) : documents.error && !data ? (
         <ErrorState title="Couldn't load documents" error={documents.error} onRetry={reload} />
       ) : data && data.totalItems === 0 ? (
         <EmptyState
@@ -126,10 +157,10 @@ export function DocumentsPanel({ workspaceId }: { workspaceId: Uuid }) {
               <thead className="border-b border-zinc-200 bg-zinc-50 text-xs font-medium tracking-wide text-zinc-500 uppercase dark:border-zinc-800 dark:bg-zinc-900/60 dark:text-zinc-400">
                 <tr>
                   <th scope="col" className="px-4 py-3">Title</th>
-                  <th scope="col" className="hidden w-36 px-4 py-3 sm:table-cell">Status</th>
+                  <th scope="col" className="hidden w-44 px-4 py-3 sm:table-cell">Status</th>
                   <th scope="col" className="hidden w-52 px-4 py-3 lg:table-cell">Details</th>
                   <th scope="col" className="hidden w-44 px-4 py-3 md:table-cell">Added</th>
-                  <th scope="col" className="w-28 px-4 py-3"><span className="sr-only">Actions</span></th>
+                  <th scope="col" className="w-36 px-4 py-3"><span className="sr-only">Actions</span></th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-zinc-100 dark:divide-zinc-800">
@@ -140,7 +171,8 @@ export function DocumentsPanel({ workspaceId }: { workspaceId: Uuid }) {
                     onRename={() => setDialog({ kind: "rename", document })}
                     onDelete={() => setDialog({ kind: "delete", document })}
                     onViewChunks={() => setDialog({ kind: "chunks", document })}
-                    onRetry={() => retry(document)}
+                    onRetry={() => retry(document, "ingestion")}
+                    onRetryIndex={() => retry(document, "index")}
                   />
                 ))}
               </tbody>
@@ -220,13 +252,19 @@ function DocumentRow({
   onDelete,
   onViewChunks,
   onRetry,
+  onRetryIndex,
 }: {
   document: DocumentMetadata;
   onRename: () => void;
   onDelete: () => void;
   onViewChunks: () => void;
   onRetry: () => void;
+  onRetryIndex: () => void;
 }) {
+  // Waiting for Ollama (detail set) or failed: offer an immediate retry instead of the timer.
+  const canRetryIndex =
+    document.status === "READY" &&
+    (document.indexStatus === "FAILED" || (document.indexStatus === "PENDING" && Boolean(document.indexDetail)));
   const href = document.sourceType === "URL" ? safeHttpUrl(document.origin) : null;
   const Icon = document.sourceType === "URL" ? LinkIcon : FileIcon;
   const details = [
@@ -261,15 +299,22 @@ function DocumentRow({
             {document.status === "FAILED" && document.statusDetail && (
               <p className="mt-1 text-xs text-red-600 dark:text-red-400">{document.statusDetail}</p>
             )}
+            {document.status === "READY" && document.indexDetail && (
+              <p
+                className={`mt-1 text-xs ${document.indexStatus === "FAILED" ? "text-red-600 dark:text-red-400" : "text-amber-700 dark:text-amber-300"}`}
+              >
+                {document.indexDetail}
+              </p>
+            )}
             <div className="mt-1.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-zinc-400 sm:hidden">
-              <DocumentStatusBadge status={document.status} />
+              <DocumentStatusBadge document={document} />
               {details.join(" · ")}
             </div>
           </div>
         </div>
       </td>
       <td className="hidden px-4 py-3 sm:table-cell">
-        <DocumentStatusBadge status={document.status} />
+        <DocumentStatusBadge document={document} />
       </td>
       <td className="hidden px-4 py-3 text-xs text-zinc-500 lg:table-cell dark:text-zinc-400">
         {details.length > 0 ? details.join(" · ") : "—"}
@@ -284,6 +329,9 @@ function DocumentRow({
           )}
           {document.status === "FAILED" && (
             <Button variant="ghost" size="sm" onClick={onRetry} aria-label={`Retry processing ${document.title}`} title="Retry processing" icon={<RefreshIcon />} />
+          )}
+          {canRetryIndex && (
+            <Button variant="ghost" size="sm" onClick={onRetryIndex} aria-label={`Retry indexing ${document.title}`} title="Retry indexing now" icon={<RefreshIcon />} />
           )}
           <Button variant="ghost" size="sm" onClick={onRename} aria-label={`Rename ${document.title}`} title="Rename" icon={<PencilIcon />} />
           <Button

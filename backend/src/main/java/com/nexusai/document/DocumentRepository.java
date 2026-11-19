@@ -41,4 +41,39 @@ interface DocumentRepository extends Repository<Document, UUID> {
             """)
     int claimForIngestion(@Param("id") UUID id, @Param("workspaceId") UUID workspaceId,
                           @Param("now") Instant now);
+
+    /** READY + index PENDING → INDEXING as a single conditional update; 1 if this caller won. */
+    @Modifying(flushAutomatically = true, clearAutomatically = true)
+    @Query("""
+            update Document d
+               set d.indexStatus = com.nexusai.document.SearchIndexStatus.INDEXING,
+                   d.updatedAt = :now
+             where d.id = :id and d.workspaceId = :workspaceId
+               and d.status = com.nexusai.document.DocumentStatus.READY
+               and d.indexStatus = com.nexusai.document.SearchIndexStatus.PENDING
+            """)
+    int claimForIndexing(@Param("id") UUID id, @Param("workspaceId") UUID workspaceId,
+                         @Param("now") Instant now);
+
+    /** System-level: documents in the given index state, oldest first. */
+    List<Document> findByIndexStatusOrderByUpdatedAtAsc(SearchIndexStatus status, Pageable pageable);
+
+    List<Document> findByIndexStatus(SearchIndexStatus status);
+
+    List<Document> findByWorkspaceIdAndIdIn(UUID workspaceId, Collection<UUID> ids);
+
+    /** Rows of (indexStatus, count) for READY documents of a workspace. */
+    @Query("""
+            select d.indexStatus, count(d) from Document d
+             where d.workspaceId = :workspaceId and d.status = com.nexusai.document.DocumentStatus.READY
+             group by d.indexStatus
+            """)
+    List<Object[]> countIndexStatuses(@Param("workspaceId") UUID workspaceId);
+
+    @Query("""
+            select count(d) from Document d
+             where d.workspaceId = :workspaceId
+               and d.status in (com.nexusai.document.DocumentStatus.PENDING, com.nexusai.document.DocumentStatus.PROCESSING)
+            """)
+    long countIngestingInWorkspace(@Param("workspaceId") UUID workspaceId);
 }

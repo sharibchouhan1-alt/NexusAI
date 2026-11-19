@@ -13,6 +13,7 @@ import { ChevronLeftIcon, FolderIcon, PencilIcon, TrashIcon } from "@/components
 import { EmptyState, ErrorState, LoadingState } from "@/components/ui/states";
 import { PageHeader } from "@/components/layout/PageHeader";
 import { DocumentsPanel } from "@/components/documents/DocumentsPanel";
+import { SearchPanel } from "@/components/search/SearchPanel";
 import { useWorkspaceNav } from "./WorkspaceNavProvider";
 import { WorkspaceFormDialog } from "./WorkspaceFormDialog";
 
@@ -85,7 +86,9 @@ export function WorkspaceDetail({ params }: { params: Promise<{ workspaceId: str
         }
       />
 
-      <DocumentsPanel workspaceId={workspace.id} />
+      {/* Keyed by workspace: local state (query, results, page) must not carry over between workspaces. */}
+      <SearchPanel key={`search-${workspace.id}`} workspaceId={workspace.id} />
+      <DocumentsPanel key={`documents-${workspace.id}`} workspaceId={workspace.id} />
 
       {dialog === "edit" && (
         <WorkspaceFormDialog

@@ -50,6 +50,10 @@ export const documentsApi = {
       signal,
     }),
 
+  /** Rebuilds the search index (embeddings) of a READY document; 409 while indexing. */
+  reindex: (workspaceId: Uuid, documentId: Uuid) =>
+    apiRequest<DocumentMetadata>(`${base(workspaceId)}/${documentId}/embeddings`, { method: "POST" }),
+
   /** Re-runs ingestion of the stored file (409 if one is already in progress). */
   reingest: (workspaceId: Uuid, documentId: Uuid) =>
     apiRequest<DocumentMetadata>(`${base(workspaceId)}/${documentId}/ingestion`, { method: "POST" }),

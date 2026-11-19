@@ -11,7 +11,12 @@ type Settled<T> = { loader: Loader<T>; version: number } & (
 );
 
 export interface Resource<T> {
+  /**
+   * Latest successful result for the current loader. Kept when a later reload fails, so a
+   * transient error during background refresh doesn't blank the UI (check `error` too).
+   */
   data: T | undefined;
+  /** Error of the most recent attempt, if it failed. */
   error: ApiError | undefined;
   /** No result yet for the current loader (first load, or its inputs changed). */
   isLoading: boolean;
@@ -29,11 +34,15 @@ export interface Resource<T> {
 export function useResource<T>(loader: Loader<T>): Resource<T> {
   const [version, setVersion] = useState(0);
   const [settled, setSettled] = useState<Settled<T> | null>(null);
+  const [lastGood, setLastGood] = useState<{ loader: Loader<T>; data: T } | null>(null);
 
   useEffect(() => {
     const controller = new AbortController();
     loader(controller.signal).then(
-      (data) => setSettled({ loader, version, ok: true, data }),
+      (data) => {
+        setSettled({ loader, version, ok: true, data });
+        setLastGood({ loader, data });
+      },
       (error: unknown) => {
         if (!controller.signal.aborted) {
           setSettled({ loader, version, ok: false, error: toApiError(error) });
@@ -45,11 +54,12 @@ export function useResource<T>(loader: Loader<T>): Resource<T> {
 
   const reload = useCallback(() => setVersion((v) => v + 1), []);
   const current = settled?.loader === loader ? settled : null;
+  const previous = lastGood?.loader === loader ? lastGood.data : undefined;
 
   return {
-    data: current?.ok ? current.data : undefined,
+    data: current?.ok ? current.data : previous,
     error: current && !current.ok ? current.error : undefined,
-    isLoading: current === null,
+    isLoading: current === null && previous === undefined,
     isRefreshing: current !== null && current.version !== version,
     reload,
   };

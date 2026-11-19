@@ -10,10 +10,13 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.io.UncheckedIOException;
 import java.time.Instant;
+import java.util.Collection;
 import java.util.EnumSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
+import java.util.stream.Collectors;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.context.ApplicationEventPublisher;
@@ -231,6 +234,121 @@ public class DocumentService {
                     return new DocumentIngestionRequested(d.getWorkspaceId(), d.getId());
                 })
                 .toList();
+    }
+
+    // --- search-index lifecycle (reported by the indexing process) ---
+
+    /** User-requested (re)indexing of a READY document. 409 if not READY or already indexing. */
+    @Transactional
+    public DocumentResponse requestIndexing(UUID workspaceId, UUID documentId) {
+        Document document = find(workspaceId, documentId);
+        if (document.getStatus() != DocumentStatus.READY) {
+            throw new ConflictException("Document " + documentId + " has no extracted text to index yet");
+        }
+        if (document.getIndexStatus() == SearchIndexStatus.INDEXING) {
+            throw new ConflictException("Document " + documentId + " is already being indexed");
+        }
+        document.setIndex(SearchIndexStatus.PENDING, null);
+        repository.saveAndFlush(document);
+        events.publishEvent(new DocumentIndexingRequested(workspaceId, documentId));
+        return DocumentResponse.from(document);
+    }
+
+    /** Atomically claims a READY document whose index is PENDING (→ INDEXING). */
+    @Transactional
+    public boolean beginIndexing(UUID workspaceId, UUID documentId) {
+        return repository.claimForIndexing(documentId, workspaceId, Instant.now()) == 1;
+    }
+
+    @Transactional
+    public void completeIndexing(UUID workspaceId, UUID documentId) {
+        transitionIndex(workspaceId, documentId, SearchIndexStatus.INDEXED, null);
+    }
+
+    /** Back to PENDING (retried automatically), e.g. while the embedding service is down. */
+    @Transactional
+    public void deferIndexing(UUID workspaceId, UUID documentId, String reason) {
+        transitionIndex(workspaceId, documentId, SearchIndexStatus.PENDING, reason);
+    }
+
+    @Transactional
+    public void failIndexing(UUID workspaceId, UUID documentId, String reason) {
+        transitionIndex(workspaceId, documentId, SearchIndexStatus.FAILED, reason);
+    }
+
+    /** System-level: READY documents waiting for embeddings, oldest first. */
+    @Transactional(readOnly = true)
+    public List<DocumentIndexingRequested> findIndexingBacklog(int limit) {
+        return repository.findByIndexStatusOrderByUpdatedAtAsc(SearchIndexStatus.PENDING, PageRequest.of(0, limit))
+                .stream()
+                .map(d -> new DocumentIndexingRequested(d.getWorkspaceId(), d.getId()))
+                .toList();
+    }
+
+    /** System-level recovery after a restart: interrupted INDEXING work returns to PENDING. */
+    @Transactional
+    public int recoverInterruptedIndexing() {
+        List<Document> interrupted = repository.findByIndexStatus(SearchIndexStatus.INDEXING);
+        interrupted.forEach(d -> {
+            d.setIndex(SearchIndexStatus.PENDING, null);
+            repository.saveAndFlush(d);
+        });
+        return interrupted.size();
+    }
+
+    /**
+     * System-level reconciliation: a READY document whose chunks lack embeddings for the
+     * current model (e.g. after a model change) is queued again. No-op while indexing.
+     */
+    @Transactional
+    public void requeueIndexing(UUID workspaceId, UUID documentId) {
+        repository.findByIdAndWorkspaceId(documentId, workspaceId)
+                .filter(d -> d.getStatus() == DocumentStatus.READY)
+                .filter(d -> d.getIndexStatus() != SearchIndexStatus.INDEXING
+                        && d.getIndexStatus() != SearchIndexStatus.PENDING)
+                .ifPresent(d -> {
+                    d.setIndex(SearchIndexStatus.PENDING, null);
+                    repository.saveAndFlush(d);
+                });
+    }
+
+    @Transactional(readOnly = true)
+    public SearchCoverage searchCoverage(UUID workspaceId) {
+        workspaces.requireExists(workspaceId);
+        long indexed = 0, pending = repository.countIngestingInWorkspace(workspaceId), failed = 0;
+        for (Object[] row : repository.countIndexStatuses(workspaceId)) {
+            long count = (Long) row[1];
+            switch (row[0] == null ? SearchIndexStatus.PENDING : (SearchIndexStatus) row[0]) {
+                case INDEXED -> indexed += count;
+                case FAILED -> failed += count;
+                case PENDING, INDEXING -> pending += count;
+            }
+        }
+        return new SearchCoverage(indexed, pending, failed);
+    }
+
+    /** Display metadata for search results, restricted to the workspace. */
+    public record DocumentSummary(UUID id, String title, String origin, String mediaType) {}
+
+    @Transactional(readOnly = true)
+    public Map<UUID, DocumentSummary> summaries(UUID workspaceId, Collection<UUID> documentIds) {
+        if (documentIds.isEmpty()) {
+            return Map.of();
+        }
+        return repository.findByWorkspaceIdAndIdIn(workspaceId, documentIds).stream()
+                .collect(Collectors.toMap(Document::getId,
+                        d -> new DocumentSummary(d.getId(), d.getTitle(), d.getOrigin(), d.getMediaType())));
+    }
+
+    private void transitionIndex(UUID workspaceId, UUID documentId, SearchIndexStatus next, String reason) {
+        String detail = reason == null || reason.length() <= MAX_STATUS_DETAIL ? reason : reason.substring(0, MAX_STATUS_DETAIL);
+        repository.findByIdAndWorkspaceId(documentId, workspaceId)
+                .filter(d -> d.getStatus() == DocumentStatus.READY)
+                .filter(d -> d.getIndexStatus() == SearchIndexStatus.INDEXING)
+                .ifPresent(d -> {
+                    d.setIndex(next, detail);
+                    repository.saveAndFlush(d);
+                });
     }
 
     // --- helpers ---

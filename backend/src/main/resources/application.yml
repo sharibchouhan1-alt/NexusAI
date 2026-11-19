@@ -18,6 +18,24 @@ spring:
   flyway:
     enabled: true
     locations: classpath:db/migration
+  ai:
+    model:
+      chat: none            # no LLM: only the embedding model is used
+      embedding: ollama
+    ollama:
+      base-url: ${OLLAMA_BASE_URL:http://localhost:11434}
+      init:
+        pull-model-strategy: never   # pull the model yourself: ollama pull nomic-embed-text
+      embedding:
+        options:
+          model: ${EMBEDDING_MODEL:nomic-embed-text}
+    retry:
+      # NexusAI retries unavailable embedding work itself (see nexusai.embedding.retry-interval).
+      max-attempts: 1
+  http:
+    clients:
+      connect-timeout: ${OLLAMA_CONNECT_TIMEOUT:2s}
+      read-timeout: ${OLLAMA_READ_TIMEOUT:60s}
   servlet:
     multipart:
       # Uploads beyond this size are rejected with 413 before reaching application code.
@@ -42,3 +60,15 @@ nexusai:
     max-text-chars: ${INGESTION_MAX_TEXT_CHARS:5000000}
     worker-threads: ${INGESTION_WORKER_THREADS:2}
     queue-capacity: ${INGESTION_QUEUE_CAPACITY:100}
+  embedding:
+    # Must equal the vector(N) column in V6__create_chunk_embeddings.sql.
+    dimensions: ${EMBEDDING_DIMENSIONS:768}
+    batch-size: ${EMBEDDING_BATCH_SIZE:32}
+    # nomic-embed-text expects task prefixes; set both empty for models that don't.
+    document-prefix: "${EMBEDDING_DOCUMENT_PREFIX:search_document: }"
+    query-prefix: "${EMBEDDING_QUERY_PREFIX:search_query: }"
+    # How often documents waiting for embeddings (e.g. while Ollama was down) are retried.
+    retry-interval: ${EMBEDDING_RETRY_INTERVAL:30s}
+  search:
+    default-limit: ${SEARCH_DEFAULT_LIMIT:10}
+    max-limit: ${SEARCH_MAX_LIMIT:50}

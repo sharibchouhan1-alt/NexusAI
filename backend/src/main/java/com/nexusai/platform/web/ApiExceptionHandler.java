@@ -11,7 +11,10 @@ import org.springframework.http.ProblemDetail;
 import org.springframework.http.ResponseEntity;
 import org.springframework.validation.FieldError;
 import org.springframework.web.bind.MethodArgumentNotValidException;
+import org.springframework.core.MethodParameter;
 import org.springframework.web.bind.annotation.ExceptionHandler;
+import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 import org.springframework.web.context.request.WebRequest;
 import org.springframework.web.method.annotation.HandlerMethodValidationException;
@@ -49,6 +52,17 @@ public class ApiExceptionHandler extends ResponseEntityExceptionHandler {
         return problem(HttpStatus.UNSUPPORTED_MEDIA_TYPE, e.getMessage());
     }
 
+    @ExceptionHandler(ServiceUnavailableException.class)
+    ResponseEntity<ProblemDetail> handleServiceUnavailable(ServiceUnavailableException e) {
+        log.warn("Service unavailable: {} ({})", e.getMessage(),
+                e.getCause() == null ? "no cause" : e.getCause().toString());
+        ProblemDetail body = problem(HttpStatus.SERVICE_UNAVAILABLE, e.getMessage());
+        body.setProperty("retryable", true);
+        return ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE)
+                .header(HttpHeaders.RETRY_AFTER, String.valueOf(Math.max(1, e.retryAfter().toSeconds())))
+                .body(body);
+    }
+
     @Override
     protected ResponseEntity<Object> handleMaxUploadSizeExceededException(
             MaxUploadSizeExceededException ex, HttpHeaders headers, HttpStatusCode status,
@@ -84,7 +98,7 @@ public class ApiExceptionHandler extends ResponseEntityExceptionHandler {
         List<Map<String, String>> errors = ex.getParameterValidationResults().stream()
                 .flatMap(result -> result.getResolvableErrors().stream()
                         .map(error -> Map.of(
-                                "field", result.getMethodParameter().getParameterName(),
+                                "field", requestName(result.getMethodParameter()),
                                 "message", String.valueOf(error.getDefaultMessage()))))
                 .toList();
         return validationFailure(errors);
@@ -94,6 +108,19 @@ public class ApiExceptionHandler extends ResponseEntityExceptionHandler {
         ProblemDetail body = problem(HttpStatus.BAD_REQUEST, "Request validation failed");
         body.setProperty("errors", errors);
         return ResponseEntity.badRequest().body(body);
+    }
+
+    /** The name the client used (e.g. {@code q} for {@code @RequestParam("q") String query}). */
+    private static String requestName(MethodParameter parameter) {
+        RequestParam param = parameter.getParameterAnnotation(RequestParam.class);
+        if (param != null && !param.name().isEmpty()) {
+            return param.name();
+        }
+        PathVariable path = parameter.getParameterAnnotation(PathVariable.class);
+        if (path != null && !path.name().isEmpty()) {
+            return path.name();
+        }
+        return String.valueOf(parameter.getParameterName());
     }
 
     private static Map<String, String> fieldError(FieldError error) {

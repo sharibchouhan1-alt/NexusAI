@@ -3,17 +3,20 @@
 AI Knowledge & Research Agent Platform. The approved architecture lives in
 [docs/architecture/](docs/architecture/).
 
-## Current status — Phase 4
+## Current status — Phase 5
 
 - Spring Boot 4.1 / Java 21 backend (modular monolith) in [backend/](backend/)
 - PostgreSQL 17 + pgvector via Docker Compose, Flyway migrations
 - Workspace and document REST APIs
 - Document ingestion: PDF/TXT upload → local file storage → text extraction → chunks with
   page/offset provenance in PostgreSQL, with processing status
+- Local semantic search: chunk embeddings from Ollama `nomic-embed-text` (768-d, via
+  Spring AI) stored in pgvector; workspace-scoped nearest-passage search with provenance
 - Next.js 16 / React 19 / Tailwind 4 frontend in [frontend/](frontend/): workspaces,
-  documents, uploads with progress, ingestion status and a chunk viewer
+  documents, uploads with progress, ingestion/index status, chunk viewer, search
 
-Not yet implemented: authentication/authorization, embeddings, vector search, RAG.
+Not yet implemented: authentication/authorization, RAG / generated answers (search
+returns passages only; no LLM is called).
 
 > **Do not expose this to a network you don't control.** There is no authentication yet:
 > anyone who can reach the API can read, upload and delete any workspace's documents.
@@ -21,7 +24,16 @@ Not yet implemented: authentication/authorization, embeddings, vector search, RA
 
 ## Prerequisites
 
-Java 21, Maven 3.9+, Node.js 20+, Docker with Compose.
+Java 21, Maven 3.9+, Node.js 20+, Docker with Compose, and [Ollama](https://ollama.com)
+running locally with the embedding model pulled (free, no API keys):
+
+```bash
+ollama pull nomic-embed-text   # Ollama must be running on localhost:11434
+```
+
+Without Ollama everything except search keeps working: uploads are extracted and chunked,
+documents wait for embeddings ("Waiting for Ollama") and are indexed automatically once
+it is reachable; the search API answers 503 with `Retry-After`.
 
 ## Run locally
 
@@ -67,6 +79,13 @@ precedence.
 | `INGESTION_CHUNK_SIZE` / `INGESTION_CHUNK_OVERLAP` | `1200` / `200` | Max characters per chunk / overlap (overlap < half the size) |
 | `INGESTION_MAX_PAGES` / `INGESTION_MAX_TEXT_CHARS` | `2000` / `5000000` | Extraction limits; larger documents fail with a reason |
 | `INGESTION_WORKER_THREADS` / `INGESTION_QUEUE_CAPACITY` | `2` / `100` | In-process ingestion pool |
+| `OLLAMA_BASE_URL` | `http://localhost:11434` | Local Ollama server |
+| `EMBEDDING_MODEL` / `EMBEDDING_DIMENSIONS` | `nomic-embed-text` / `768` | Model and vector size (must match `vector(768)` in V6) |
+| `EMBEDDING_DOCUMENT_PREFIX` / `EMBEDDING_QUERY_PREFIX` | `search_document: ` / `search_query: ` | nomic task prefixes |
+| `EMBEDDING_BATCH_SIZE` | `32` | Chunks per Ollama call |
+| `EMBEDDING_RETRY_INTERVAL` | `30s` | Retry cadence for documents waiting on Ollama |
+| `OLLAMA_CONNECT_TIMEOUT` / `OLLAMA_READ_TIMEOUT` | `2s` / `60s` | HTTP timeouts to Ollama |
+| `SEARCH_DEFAULT_LIMIT` / `SEARCH_MAX_LIMIT` | `10` / `50` | Results per query |
 
 Example response:
 
@@ -89,6 +108,14 @@ Returns `503` with `"status":"DOWN"` if the database is unreachable or pgvector 
 | `GET` / `PUT` / `DELETE` | `/api/workspaces/{workspaceId}/documents/{documentId}` | 200 / 200 / 204 |
 | `GET` | `/api/workspaces/{workspaceId}/documents/{documentId}/chunks?page=0&size=20` | 200 (paged) |
 | `POST` | `/api/workspaces/{workspaceId}/documents/{documentId}/ingestion` | 202: re-run ingestion |
+| `POST` | `/api/workspaces/{workspaceId}/documents/{documentId}/embeddings` | 202: re-run indexing now |
+| `GET` | `/api/workspaces/{workspaceId}/search?q=...&limit=10` | 200: ranked passages; 503 if Ollama is down |
+
+Search response: `{query, model, coverage: {indexed, pending, failed}, results: [{rank, score,
+documentId, documentTitle, documentOrigin, mediaType, chunkId, chunkIndex, pageNumber,
+charStart, charEnd, content}]}`. `score` is cosine similarity (higher = closer). Documents
+carry `indexStatus` (`PENDING`, `INDEXING`, `INDEXED`, `FAILED`; null until READY) and
+`indexDetail` (why it is waiting or failed).
 
 Workspace body: `{"name": "...", "description": "..."}`. Metadata body:
 `{"title": "...", "sourceType": "FILE|URL", "mediaType": "application/pdf", "origin": "..."}`
@@ -129,6 +156,31 @@ through the wrong workspace returns the same 404 as a missing one.
   `documents (id, workspace_id)` makes it impossible to attach a chunk to another
   workspace's document.
 
+### Embeddings and search design
+
+- **Modules:** Ingestion owns `chunk_embeddings`, kept separate from `document_chunks` so
+  a model change never re-derives chunks. Every row records its model
+  (`ollama:nomic-embed-text`), and search only compares vectors of the configured model.
+  The new Search module embeds the query, retrieves through Ingestion's published
+  `ChunkSearch` interface, and adds titles via `DocumentService`. No module reads another
+  module's tables. Spring AI types appear only in the `platform.ai.EmbeddingService` adapter.
+- **Pipeline:** extract → chunk → document READY (`indexStatus = PENDING`) → embed in
+  batches of chunks that still lack a vector → `INDEXED`. Each batch is its own
+  transaction, so interrupted indexing resumes instead of starting over.
+- **Ollama downtime:** provider errors become one retryable failure. The document goes
+  back to `PENDING` with an explanation. A scheduler probes Ollama once per
+  `EMBEDDING_RETRY_INTERVAL` and resumes waiting work, and a manual retry endpoint and
+  button exist too. Search answers 503 with `Retry-After`.
+- **Backfill:** V6 marks existing READY documents `PENDING`. On startup, any document
+  with chunks lacking embeddings for the current model is queued again. This covers older
+  documents and model changes.
+- **Retrieval:** pgvector HNSW (cosine) index plus a workspace and model filter, with
+  `hnsw.iterative_scan = relaxed_order` so filtering can't starve small workspaces.
+  Results are re-sorted by exact distance.
+- **Integrity:** `(chunk_id, document_id, workspace_id)` foreign-keys to the chunk, so an
+  embedding can never point across documents or workspaces. Deleting or re-ingesting a
+  document cascades to its embeddings.
+
 ## Tests
 
 ```bash
@@ -146,6 +198,15 @@ mvn verify
   rejected uploads (nothing stored), failure reasons, retry/idempotent re-ingestion,
   workspace scoping (API and database constraint), deletion of chunks and files
 - `UploadSizeLimitIntegrationTest`: 413 through a real HTTP server
+- `SemanticSearchIntegrationTest`, `IndexingIntegrationTest`: ranking and provenance, PDF
+  page numbers, workspace isolation, validation, 503 while Ollama is down, automatic
+  resume, wrong-dimension failure and manual retry, re-ingestion, deletion, backfill, DB
+  integrity. These use a deterministic test-only embedding model in place of Ollama,
+  following the architecture's stubbed-provider testing posture.
+- `OllamaSemanticSearchTest`: end to end with the **real** `nomic-embed-text`. The query
+  shares no keywords with the expected passage. Skipped automatically if Ollama or the
+  model is unavailable.
+- `EmbeddingServiceTest`: prefixes, error translation, vector contract
 - Unit tests: `TextChunkerTest`, `TextExtractorTest` (generated PDFs: multi-page,
   encrypted, image-only, corrupt), `UploadInspectorTest`, `LocalFileStorageTest` (path
   traversal, permissions)
@@ -162,7 +223,9 @@ backend/src/main/java/com/nexusai/
   platform/storage/         # FileStorage + local filesystem implementation
   workspace/                # Workspace module (entity/repository package-private)
   document/                 # Documents, uploads, lifecycle; uses WorkspaceService only
-  ingestion/                # extraction, chunking, chunk storage; uses DocumentService only
+  ingestion/                # extraction, chunking, chunks + embeddings, indexing; uses DocumentService
+  search/                   # semantic search API; uses EmbeddingService, ChunkSearch, DocumentService
+  platform/ai/              # EmbeddingService: Spring AI / Ollama adapter
 backend/src/main/resources/
   application.yml
   db/migration/             # Flyway, versioned and forward-only

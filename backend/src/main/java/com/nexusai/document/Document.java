@@ -62,6 +62,13 @@ class Document {
 
     private Integer chunkCount;
 
+    @Enumerated(EnumType.STRING)
+    @Column(length = 32)
+    private SearchIndexStatus indexStatus;
+
+    @Column(length = 1000)
+    private String indexDetail;
+
     @CreationTimestamp
     @Column(nullable = false, updatable = false)
     private Instant createdAt;
@@ -108,18 +115,23 @@ class Document {
     void queueIngestion() {
         status = DocumentStatus.PENDING;
         statusDetail = null;
+        clearIndex(); // chunks will be replaced, and their embeddings with them
     }
 
     void startIngestion() {
         status = DocumentStatus.PROCESSING;
         statusDetail = null;
+        clearIndex();
     }
 
+    /** Chunks are stored; the document now waits for embeddings. */
     void completeIngestion(Integer pages, int chunks) {
         status = DocumentStatus.READY;
         statusDetail = null;
         pageCount = pages;
         chunkCount = chunks;
+        indexStatus = SearchIndexStatus.PENDING;
+        indexDetail = null;
     }
 
     void failIngestion(String reason) {
@@ -127,6 +139,19 @@ class Document {
         statusDetail = reason;
         pageCount = null;
         chunkCount = null;
+        clearIndex();
+    }
+
+    // --- search-index lifecycle (only for READY documents) ---
+
+    void setIndex(SearchIndexStatus status, String detail) {
+        indexStatus = status;
+        indexDetail = detail;
+    }
+
+    private void clearIndex() {
+        indexStatus = null;
+        indexDetail = null;
     }
 
     UUID getId() { return id; }
@@ -141,6 +166,8 @@ class Document {
     String getStatusDetail() { return statusDetail; }
     Integer getPageCount() { return pageCount; }
     Integer getChunkCount() { return chunkCount; }
+    SearchIndexStatus getIndexStatus() { return indexStatus; }
+    String getIndexDetail() { return indexDetail; }
     Instant getCreatedAt() { return createdAt; }
     Instant getUpdatedAt() { return updatedAt; }
 }

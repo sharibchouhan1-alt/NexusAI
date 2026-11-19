@@ -39,6 +39,12 @@ class IngestionController {
                 (int) ((total + size - 1) / size));
     }
 
+    /** Re-builds the search index (embeddings) of a READY document. 409 if not READY or indexing. */
+    @PostMapping("/embeddings")
+    ResponseEntity<DocumentResponse> reindex(@PathVariable UUID workspaceId, @PathVariable UUID documentId) {
+        return ResponseEntity.accepted().body(documents.requestIndexing(workspaceId, documentId));
+    }
+
     /** Re-runs ingestion of the stored original (e.g. after a failure). 409 if in flight. */
     @PostMapping("/ingestion")
     ResponseEntity<DocumentResponse> reingest(@PathVariable UUID workspaceId, @PathVariable UUID documentId) {

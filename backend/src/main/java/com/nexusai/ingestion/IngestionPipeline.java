@@ -27,13 +27,15 @@ class IngestionPipeline {
     private final TextExtractor extractor;
     private final TextChunker chunker;
     private final ChunkRepository chunks;
+    private final DocumentIndexer indexer;
 
     IngestionPipeline(DocumentService documents, TextExtractor extractor, TextChunker chunker,
-                      ChunkRepository chunks) {
+                      ChunkRepository chunks, DocumentIndexer indexer) {
         this.documents = documents;
         this.extractor = extractor;
         this.chunker = chunker;
         this.chunks = chunks;
+        this.indexer = indexer;
     }
 
     void ingest(UUID workspaceId, UUID documentId) {
@@ -54,6 +56,9 @@ class IngestionPipeline {
             documents.completeIngestion(workspaceId, documentId, text.pageCount(), pieces.size());
             log.info("Ingested document {}: {} chunks, pages={}, {} ms", documentId, pieces.size(),
                     text.pageCount() == null ? "n/a" : text.pageCount(), (System.nanoTime() - started) / 1_000_000);
+            // Chunks are durable and the document is READY; embeddings follow. If the embedding
+            // service is down the document stays READY with its index PENDING and is retried later.
+            indexer.index(workspaceId, documentId);
         } catch (IngestionException e) {
             log.info("Ingestion of document {} failed: {}", documentId, e.getMessage());
             documents.failIngestion(workspaceId, documentId, e.getMessage());

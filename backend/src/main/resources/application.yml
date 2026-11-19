@@ -18,6 +18,11 @@ spring:
   flyway:
     enabled: true
     locations: classpath:db/migration
+  servlet:
+    multipart:
+      # Uploads beyond this size are rejected with 413 before reaching application code.
+      max-file-size: ${MAX_UPLOAD_SIZE:25MB}
+      max-request-size: ${MAX_UPLOAD_REQUEST_SIZE:26MB}
 
 server:
   port: ${SERVER_PORT:8080}
@@ -26,3 +31,14 @@ nexusai:
   cors:
     # Comma-separated browser origins allowed to call /api/**.
     allowed-origins: ${CORS_ALLOWED_ORIGINS:http://localhost:3000}
+  storage:
+    local:
+      # Original uploaded files. Keep outside the Git checkout (default: ~/.nexusai/storage).
+      root: ${STORAGE_LOCAL_ROOT:${user.home}/.nexusai/storage}
+  ingestion:
+    chunk-size: ${INGESTION_CHUNK_SIZE:1200}        # max characters per chunk
+    chunk-overlap: ${INGESTION_CHUNK_OVERLAP:200}  # characters repeated between neighbours
+    max-pages: ${INGESTION_MAX_PAGES:2000}
+    max-text-chars: ${INGESTION_MAX_TEXT_CHARS:5000000}
+    worker-threads: ${INGESTION_WORKER_THREADS:2}
+    queue-capacity: ${INGESTION_QUEUE_CAPACITY:100}

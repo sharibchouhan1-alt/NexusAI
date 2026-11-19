@@ -17,3 +17,6 @@ target/
 # IDE
 .idea/
 .vscode/
+
+# Local file storage, if STORAGE_LOCAL_ROOT is pointed inside the repo
+/data/

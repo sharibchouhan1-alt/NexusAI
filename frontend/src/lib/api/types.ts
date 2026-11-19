@@ -45,8 +45,13 @@ export interface WorkspaceRequest {
 /** com.nexusai.document.DocumentSourceType */
 export type DocumentSourceType = "FILE" | "URL";
 
-/** com.nexusai.document.DocumentStatus */
-export type DocumentStatus = "REGISTERED";
+/**
+ * com.nexusai.document.DocumentStatus. REGISTERED = metadata only (no file); the others
+ * describe ingestion of an uploaded file.
+ */
+export type DocumentStatus = "REGISTERED" | "PENDING" | "PROCESSING" | "READY" | "FAILED";
+
+export const IN_FLIGHT_STATUSES: readonly DocumentStatus[] = ["PENDING", "PROCESSING"];
 
 /** com.nexusai.document.DocumentResponse */
 export interface DocumentMetadata {
@@ -57,8 +62,25 @@ export interface DocumentMetadata {
   mediaType: string | null;
   origin: string | null;
   status: DocumentStatus;
+  /** User-facing failure reason when status is FAILED. */
+  statusDetail: string | null;
+  fileSizeBytes: number | null;
+  /** PDF page count; null for plain text and metadata-only documents. */
+  pageCount: number | null;
+  chunkCount: number | null;
   createdAt: Instant;
   updatedAt: Instant;
+}
+
+/** com.nexusai.ingestion.ChunkResponse */
+export interface DocumentChunk {
+  id: Uuid;
+  index: number;
+  /** 1-based PDF page; null for plain text. */
+  pageNumber: number | null;
+  charStart: number;
+  charEnd: number;
+  content: string;
 }
 
 /** com.nexusai.document.CreateDocumentRequest */
@@ -90,7 +112,12 @@ export const LIMITS = {
   mediaType: 255,
   origin: 2048,
   pageSizeMax: 100,
+  /** Backend default MAX_UPLOAD_SIZE (25MB). The server enforces the real limit (413). */
+  uploadMaxBytes: 25 * 1024 * 1024,
 } as const;
+
+/** File types the upload endpoint accepts (checked by extension and content server-side). */
+export const UPLOAD_EXTENSIONS = [".pdf", ".txt"] as const;
 
 /** Same pattern as CreateDocumentRequest.mediaType. */
 export const MEDIA_TYPE_PATTERN = /^[\w.+-]+\/[\w.+-]+$/;

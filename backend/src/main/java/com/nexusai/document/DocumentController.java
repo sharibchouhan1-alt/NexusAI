@@ -4,9 +4,13 @@ import com.nexusai.platform.web.PageResponse;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.Max;
 import jakarta.validation.constraints.Min;
+import jakarta.validation.constraints.Size;
 import java.net.URI;
 import java.util.UUID;
+import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
+import org.springframework.web.bind.annotation.RequestPart;
+import org.springframework.web.multipart.MultipartFile;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -33,6 +37,20 @@ class DocumentController {
         DocumentResponse created = service.register(workspaceId, request);
         URI location = URI.create("/api/workspaces/" + workspaceId + "/documents/" + created.id());
         return ResponseEntity.created(location).body(created);
+    }
+
+    /**
+     * Uploads a PDF or TXT original (multipart field {@code file}, optional {@code title}).
+     * Returns 202: the document is stored and PENDING; ingestion continues in the background.
+     */
+    @PostMapping(consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
+    ResponseEntity<DocumentResponse> upload(@PathVariable UUID workspaceId,
+                                            @RequestPart("file") MultipartFile file,
+                                            @RequestParam(value = "title", required = false)
+                                            @Size(max = 500) String title) {
+        DocumentResponse created = service.upload(workspaceId, file, title);
+        URI location = URI.create("/api/workspaces/" + workspaceId + "/documents/" + created.id());
+        return ResponseEntity.accepted().location(location).body(created);
     }
 
     @GetMapping

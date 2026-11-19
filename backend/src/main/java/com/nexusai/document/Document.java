@@ -16,7 +16,7 @@ import org.hibernate.annotations.UpdateTimestamp;
 /**
  * Persistence model; internal to the document module and never serialized to clients.
  * The workspace is held as an id, not a JPA association: the Workspace entity belongs to
- * another module.
+ * another module. An uploaded original lives in file storage; only its key is held here.
  */
 @Entity
 @Table(name = "documents")
@@ -46,6 +46,22 @@ class Document {
     @Column(nullable = false, length = 32)
     private DocumentStatus status;
 
+    @Column(length = 512, updatable = false)
+    private String storageKey;
+
+    @Column(updatable = false)
+    private Long fileSizeBytes;
+
+    @Column(name = "content_sha256", length = 64, updatable = false)
+    private String contentSha256;
+
+    @Column(length = 1000)
+    private String statusDetail;
+
+    private Integer pageCount;
+
+    private Integer chunkCount;
+
     @CreationTimestamp
     @Column(nullable = false, updatable = false)
     private Instant createdAt;
@@ -57,6 +73,7 @@ class Document {
     protected Document() {
     }
 
+    /** Metadata-only registration (no file). */
     Document(UUID workspaceId, String title, DocumentSourceType sourceType,
              String mediaType, String origin) {
         this.workspaceId = workspaceId;
@@ -67,8 +84,49 @@ class Document {
         this.status = DocumentStatus.REGISTERED;
     }
 
+    /** An uploaded file, already written to storage, waiting for ingestion. */
+    static Document uploaded(UUID workspaceId, String title, String mediaType, String originalFilename,
+                             String storageKey, long sizeBytes, String sha256) {
+        Document document = new Document(workspaceId, title, DocumentSourceType.FILE, mediaType, originalFilename);
+        document.storageKey = storageKey;
+        document.fileSizeBytes = sizeBytes;
+        document.contentSha256 = sha256;
+        document.status = DocumentStatus.PENDING;
+        return document;
+    }
+
     void retitle(String title) {
         this.title = title;
+    }
+
+    boolean hasFile() {
+        return storageKey != null;
+    }
+
+    // --- ingestion lifecycle (transitions are validated by DocumentService) ---
+
+    void queueIngestion() {
+        status = DocumentStatus.PENDING;
+        statusDetail = null;
+    }
+
+    void startIngestion() {
+        status = DocumentStatus.PROCESSING;
+        statusDetail = null;
+    }
+
+    void completeIngestion(Integer pages, int chunks) {
+        status = DocumentStatus.READY;
+        statusDetail = null;
+        pageCount = pages;
+        chunkCount = chunks;
+    }
+
+    void failIngestion(String reason) {
+        status = DocumentStatus.FAILED;
+        statusDetail = reason;
+        pageCount = null;
+        chunkCount = null;
     }
 
     UUID getId() { return id; }
@@ -78,6 +136,11 @@ class Document {
     String getMediaType() { return mediaType; }
     String getOrigin() { return origin; }
     DocumentStatus getStatus() { return status; }
+    String getStorageKey() { return storageKey; }
+    Long getFileSizeBytes() { return fileSizeBytes; }
+    String getStatusDetail() { return statusDetail; }
+    Integer getPageCount() { return pageCount; }
+    Integer getChunkCount() { return chunkCount; }
     Instant getCreatedAt() { return createdAt; }
     Instant getUpdatedAt() { return updatedAt; }
 }

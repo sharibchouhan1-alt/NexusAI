@@ -13,6 +13,7 @@ interface ModalProps {
   onSubmit?: (event: FormEvent<HTMLFormElement>) => void;
   footer: ReactNode;
   children?: ReactNode;
+  size?: "md" | "lg";
 }
 
 /**
@@ -21,7 +22,7 @@ interface ModalProps {
  * component unmounts or when Next.js hides the route with <Activity>, so a hidden page
  * never leaves an inert backdrop over the visible one.
  */
-export function Modal({ title, description, onClose, busy = false, onSubmit, footer, children }: ModalProps) {
+export function Modal({ title, description, onClose, busy = false, onSubmit, footer, children, size = "md" }: ModalProps) {
   const ref = useRef<HTMLDialogElement>(null);
   const titleId = useId();
 
@@ -76,7 +77,7 @@ export function Modal({ title, description, onClose, busy = false, onSubmit, foo
       onClick={(event) => {
         if (event.target === event.currentTarget) requestClose(); // backdrop click
       }}
-      className="m-auto w-[calc(100%-2rem)] max-w-lg overflow-hidden rounded-xl bg-white p-0 text-left shadow-2xl ring-1 ring-zinc-900/5 backdrop:bg-zinc-950/50 backdrop:backdrop-blur-[2px] dark:bg-zinc-900 dark:ring-zinc-800"
+      className={`m-auto w-[calc(100%-2rem)] ${size === "lg" ? "max-w-3xl" : "max-w-lg"} overflow-hidden rounded-xl bg-white p-0 text-left shadow-2xl ring-1 ring-zinc-900/5 backdrop:bg-zinc-950/50 backdrop:backdrop-blur-[2px] dark:bg-zinc-900 dark:ring-zinc-800`}
     >
       {onSubmit ? (
         <form noValidate onSubmit={onSubmit}>

@@ -3,15 +3,21 @@
 AI Knowledge & Research Agent Platform. The approved architecture lives in
 [docs/architecture/](docs/architecture/).
 
-## Current status — Phase 3
+## Current status — Phase 4
 
 - Spring Boot 4.1 / Java 21 backend (modular monolith) in [backend/](backend/)
 - PostgreSQL 17 + pgvector via Docker Compose, Flyway migrations
-- Workspace and document-metadata REST APIs
-- Next.js 16 / React 19 / Tailwind 4 frontend in [frontend/](frontend/): dashboard,
-  workspace and document management against the live API
+- Workspace and document REST APIs
+- Document ingestion: PDF/TXT upload → local file storage → text extraction → chunks with
+  page/offset provenance in PostgreSQL, with processing status
+- Next.js 16 / React 19 / Tailwind 4 frontend in [frontend/](frontend/): workspaces,
+  documents, uploads with progress, ingestion status and a chunk viewer
 
-Not yet implemented: authentication, file upload, ingestion, RAG.
+Not yet implemented: authentication/authorization, embeddings, vector search, RAG.
+
+> **Do not expose this to a network you don't control.** There is no authentication yet:
+> anyone who can reach the API can read, upload and delete any workspace's documents.
+> Run it on localhost only until the Auth module exists.
 
 ## Prerequisites
 
@@ -56,6 +62,11 @@ precedence.
 | `DB_PASSWORD` | — (required by Compose) | Database password |
 | `SERVER_PORT` | `8080` | HTTP port |
 | `CORS_ALLOWED_ORIGINS` | `http://localhost:3000` | Comma-separated browser origins allowed to call `/api/**` |
+| `STORAGE_LOCAL_ROOT` | `~/.nexusai/storage` | Where uploaded originals are stored (keep outside Git) |
+| `MAX_UPLOAD_SIZE` / `MAX_UPLOAD_REQUEST_SIZE` | `25MB` / `26MB` | Upload limits (larger → 413) |
+| `INGESTION_CHUNK_SIZE` / `INGESTION_CHUNK_OVERLAP` | `1200` / `200` | Max characters per chunk / overlap (overlap < half the size) |
+| `INGESTION_MAX_PAGES` / `INGESTION_MAX_TEXT_CHARS` | `2000` / `5000000` | Extraction limits; larger documents fail with a reason |
+| `INGESTION_WORKER_THREADS` / `INGESTION_QUEUE_CAPACITY` | `2` / `100` | In-process ingestion pool |
 
 Example response:
 
@@ -65,25 +76,58 @@ Example response:
 
 Returns `503` with `"status":"DOWN"` if the database is unreachable or pgvector is missing.
 
-## API (Phase 2)
+## API
 
 | Method | Path | Success |
 | --- | --- | --- |
 | `POST` | `/api/workspaces` | 201 + `Location` |
 | `GET` | `/api/workspaces?page=0&size=20` | 200 (paged) |
 | `GET` / `PUT` / `DELETE` | `/api/workspaces/{workspaceId}` | 200 / 200 / 204 |
-| `POST` | `/api/workspaces/{workspaceId}/documents` | 201 + `Location` |
+| `POST` (JSON) | `/api/workspaces/{workspaceId}/documents` | 201: metadata-only document |
+| `POST` (multipart) | `/api/workspaces/{workspaceId}/documents` | 202: upload, ingestion starts |
 | `GET` | `/api/workspaces/{workspaceId}/documents?page=0&size=20` | 200 (paged, newest first) |
 | `GET` / `PUT` / `DELETE` | `/api/workspaces/{workspaceId}/documents/{documentId}` | 200 / 200 / 204 |
+| `GET` | `/api/workspaces/{workspaceId}/documents/{documentId}/chunks?page=0&size=20` | 200 (paged) |
+| `POST` | `/api/workspaces/{workspaceId}/documents/{documentId}/ingestion` | 202: re-run ingestion |
 
-Workspace body: `{"name": "...", "description": "..."}`. Document body:
+Workspace body: `{"name": "...", "description": "..."}`. Metadata body:
 `{"title": "...", "sourceType": "FILE|URL", "mediaType": "application/pdf", "origin": "..."}`
-(only `title` is editable). Documents hold metadata only: no file upload or ingestion yet.
+(only `title` is editable). Upload: multipart field `file` (`.pdf` or `.txt`) and optional
+`title`, e.g. `curl -F file=@paper.pdf localhost:8080/api/workspaces/$WS/documents`.
+
+Document `status`: `REGISTERED` (metadata only) → for uploads `PENDING` → `PROCESSING` →
+`READY` (with `pageCount`, `chunkCount`) or `FAILED` (with a user-facing `statusDetail`;
+retry via `POST …/ingestion`). Deleting a document removes its chunks and stored file.
 
 Errors are RFC 9457 problem details (`application/problem+json`): 400 for validation
-(with an `errors` array of `{field, message}`), 404 for missing resources, 409 when deleting
-a workspace that still has documents. A document addressed through the wrong workspace
-returns the same 404 as a missing one.
+(with an `errors` array of `{field, message}`) or an empty file, 404 for missing resources,
+409 for conflicts (non-empty workspace delete, ingestion already running), 413 for files
+over the size limit, 415 for unsupported or mismatched file types. A document addressed
+through the wrong workspace returns the same 404 as a missing one.
+
+### Ingestion design
+
+- **Module boundaries:** the Document module validates and stores the original and owns
+  the lifecycle status. After commit it publishes an in-process `DocumentIngestionRequested`
+  event. The Ingestion module consumes it on a bounded worker pool, reads the original
+  through `DocumentService`, and owns `document_chunks`. Document never depends on
+  Ingestion.
+- **Upload safety:** the type comes from the extension *and* the bytes (`%PDF-` header,
+  or no NUL bytes for text). The client's Content-Type is ignored. The stored file name
+  is a random UUID under `<root>/<workspaceId>/`. User file names are only display
+  metadata, reduced to a safe base name. Files are written to a temp file and atomically
+  moved into place, with owner-only permissions (700/600).
+- **Extraction:** PDFBox per page, with temp-file buffering and page/character limits.
+  Text must be valid UTF-8. Control characters (including NUL) are stripped. Scanned,
+  image-only, encrypted and damaged PDFs fail with a clear reason. There is no OCR.
+- **Chunking:** chunks never cross a page boundary. Each is ≤ `INGESTION_CHUNK_SIZE`
+  characters, split at paragraph, then line, then sentence, then word boundaries, with a
+  word-aligned overlap. `charStart`/`charEnd` index the page's extracted text exactly.
+- **Recovery:** each step is a short transaction. On startup, documents left
+  `PENDING`/`PROCESSING` are re-queued. This assumes a single backend instance.
+- **Workspace isolation:** chunks carry `workspace_id`. A composite foreign key to
+  `documents (id, workspace_id)` makes it impossible to attach a chunk to another
+  workspace's document.
 
 ## Tests
 
@@ -98,6 +142,15 @@ mvn verify
   live endpoint
 - `WorkspaceApiIntegrationTest`, `DocumentApiIntegrationTest`: CRUD, validation, 404s,
   409 on non-empty workspace delete, and workspace isolation
+- `IngestionApiIntegrationTest`: TXT/PDF upload → READY with chunks and page numbers,
+  rejected uploads (nothing stored), failure reasons, retry/idempotent re-ingestion,
+  workspace scoping (API and database constraint), deletion of chunks and files
+- `UploadSizeLimitIntegrationTest`: 413 through a real HTTP server
+- Unit tests: `TextChunkerTest`, `TextExtractorTest` (generated PDFs: multi-page,
+  encrypted, image-only, corrupt), `UploadInspectorTest`, `LocalFileStorageTest` (path
+  traversal, permissions)
+
+Tests store uploads under `${java.io.tmpdir}/nexusai-test-storage`, never your real storage.
 
 ## Layout
 
@@ -106,8 +159,10 @@ backend/src/main/java/com/nexusai/
   NexusAiApplication.java
   platform/health/          # cross-cutting health check
   platform/web/             # problem-details errors, paging DTO, CORS
+  platform/storage/         # FileStorage + local filesystem implementation
   workspace/                # Workspace module (entity/repository package-private)
-  document/                 # Document metadata module; uses WorkspaceService only
+  document/                 # Documents, uploads, lifecycle; uses WorkspaceService only
+  ingestion/                # extraction, chunking, chunk storage; uses DocumentService only
 backend/src/main/resources/
   application.yml
   db/migration/             # Flyway, versioned and forward-only

@@ -2,7 +2,9 @@ package com.nexusai.platform.health;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import com.nexusai.ApiTestSupport;
 import com.nexusai.TestcontainersConfiguration;
+import org.springframework.test.context.TestPropertySource;
 import java.util.Map;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -18,6 +20,7 @@ import org.springframework.web.client.RestClient;
  */
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
 @Import(TestcontainersConfiguration.class)
+@TestPropertySource(properties = ApiTestSupport.TEST_STORAGE_ROOT)
 class HealthIntegrationTest {
 
     @LocalServerPort

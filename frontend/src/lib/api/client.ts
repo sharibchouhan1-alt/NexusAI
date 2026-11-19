@@ -71,15 +71,65 @@ export async function apiRequest<T>(path: string, options: RequestOptions = {}):
 
   const payload: unknown = await response.json().catch(() => null);
 
-  if (!response.ok) {
-    const problem = isProblem(payload) ? payload : null;
-    throw new ApiError(
-      response.status,
-      problem?.detail ?? problem?.title ?? `Request failed (${response.status})`,
-      problem,
-    );
-  }
+  if (!response.ok) throw errorFromPayload(response.status, payload);
   return payload as T;
+}
+
+export interface UploadOptions {
+  /** Called with the fraction (0–1) of the request body sent so far. */
+  onProgress?: (fraction: number) => void;
+  signal?: AbortSignal;
+}
+
+/**
+ * Multipart POST with upload progress. fetch() cannot report upload progress, so this uses
+ * XMLHttpRequest; errors are parsed exactly like apiRequest's. Aborting rejects with an
+ * AbortError DOMException.
+ */
+export function apiUpload<T>(path: string, form: FormData, { onProgress, signal }: UploadOptions = {}): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    if (signal?.aborted) {
+      reject(new DOMException("Upload cancelled", "AbortError"));
+      return;
+    }
+    const xhr = new XMLHttpRequest();
+    xhr.open("POST", API_BASE_URL + path);
+    xhr.setRequestHeader("Accept", "application/json, application/problem+json");
+
+    xhr.upload.onprogress = (event) => {
+      if (event.lengthComputable) onProgress?.(event.loaded / event.total);
+    };
+    xhr.onload = () => {
+      let payload: unknown = null;
+      try {
+        payload = xhr.responseText ? JSON.parse(xhr.responseText) : null;
+      } catch {
+        // non-JSON body: fall through to the generic message
+      }
+      if (xhr.status >= 200 && xhr.status < 300) resolve(payload as T);
+      else reject(errorFromPayload(xhr.status, payload));
+    };
+    xhr.onerror = () =>
+      reject(
+        new ApiError(
+          0,
+          `The upload could not be completed. Check that the NexusAI API at ${API_BASE_URL} is running and the file is within the size limit.`,
+        ),
+      );
+    xhr.onabort = () => reject(new DOMException("Upload cancelled", "AbortError"));
+    signal?.addEventListener("abort", () => xhr.abort(), { once: true });
+
+    // Let the browser set the multipart boundary; never set Content-Type manually here.
+    xhr.send(form);
+  });
+}
+
+export const isAbortError = (error: unknown) =>
+  error instanceof DOMException && error.name === "AbortError";
+
+function errorFromPayload(status: number, payload: unknown): ApiError {
+  const problem = isProblem(payload) ? payload : null;
+  return new ApiError(status, problem?.detail ?? problem?.title ?? `Request failed (${status})`, problem);
 }
 
 function isProblem(value: unknown): value is ProblemDetail {

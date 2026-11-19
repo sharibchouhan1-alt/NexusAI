@@ -15,6 +15,7 @@ import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 import org.springframework.web.context.request.WebRequest;
 import org.springframework.web.method.annotation.HandlerMethodValidationException;
+import org.springframework.web.multipart.MaxUploadSizeExceededException;
 import org.springframework.web.servlet.mvc.method.annotation.ResponseEntityExceptionHandler;
 
 /**
@@ -36,6 +37,28 @@ public class ApiExceptionHandler extends ResponseEntityExceptionHandler {
     @ExceptionHandler(ConflictException.class)
     ProblemDetail handleConflict(ConflictException e) {
         return problem(HttpStatus.CONFLICT, e.getMessage());
+    }
+
+    @ExceptionHandler(InvalidRequestException.class)
+    ProblemDetail handleInvalidRequest(InvalidRequestException e) {
+        return problem(HttpStatus.BAD_REQUEST, e.getMessage());
+    }
+
+    @ExceptionHandler(UnsupportedFileTypeException.class)
+    ProblemDetail handleUnsupportedFileType(UnsupportedFileTypeException e) {
+        return problem(HttpStatus.UNSUPPORTED_MEDIA_TYPE, e.getMessage());
+    }
+
+    @Override
+    protected ResponseEntity<Object> handleMaxUploadSizeExceededException(
+            MaxUploadSizeExceededException ex, HttpHeaders headers, HttpStatusCode status,
+            WebRequest request) {
+        ProblemDetail body = problem(HttpStatus.CONTENT_TOO_LARGE,
+                "The file exceeds the maximum upload size");
+        if (ex.getMaxUploadSize() > 0) {
+            body.setProperty("maxUploadSizeBytes", ex.getMaxUploadSize());
+        }
+        return ResponseEntity.status(HttpStatus.CONTENT_TOO_LARGE).body(body);
     }
 
     @ExceptionHandler(Exception.class)

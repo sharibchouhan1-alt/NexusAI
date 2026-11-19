@@ -25,4 +25,16 @@ public class ChunkSearch {
     public List<ChunkMatch> nearest(UUID workspaceId, String model, float[] queryVector, int limit) {
         return chunks.nearest(workspaceId, model, queryVector, limit);
     }
+
+    /** A stored chunk with provenance (no similarity: it was read, not searched). */
+    public record StoredChunk(UUID chunkId, UUID documentId, int chunkIndex, Integer pageNumber,
+                              int charStart, int charEnd, String content) {}
+
+    /**
+     * The chunk and up to {@code window} neighbouring chunks on each side from the same
+     * document, in order. Empty if the chunk doesn't exist in this workspace.
+     */
+    public List<StoredChunk> withContext(UUID workspaceId, UUID chunkId, int window) {
+        return chunks.withContext(workspaceId, chunkId, Math.max(0, Math.min(window, 3)));
+    }
 }

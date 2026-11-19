@@ -235,3 +235,100 @@ export interface Turn {
 }
 
 export const CHAT_LIMITS = { question: 4000, title: 200 } as const;
+
+// --- Research module (com.nexusai.research.ResearchDtos) ---
+
+/** com.nexusai.research.ResearchStatus */
+export type ResearchStatus =
+  | "QUEUED"
+  | "PLANNING"
+  | "RUNNING"
+  | "SYNTHESIZING"
+  | "COMPLETED"
+  | "INSUFFICIENT_EVIDENCE"
+  | "FAILED"
+  | "CANCELLED";
+
+export const ACTIVE_RESEARCH: readonly ResearchStatus[] = ["QUEUED", "PLANNING", "RUNNING", "SYNTHESIZING"];
+
+export type ResearchStepStatus = "PENDING" | "RUNNING" | "COMPLETED" | "FAILED" | "SKIPPED";
+export type ToolCallStatus = "SUCCEEDED" | "FAILED" | "REJECTED";
+
+export interface ResearchToolCall {
+  seq: number;
+  tool: string;
+  /** Arguments as the model proposed them (JSON text; data, never executed). */
+  arguments: string;
+  reason: string | null;
+  status: ToolCallStatus;
+  resultSummary: string | null;
+  error: string | null;
+  durationMs: number;
+  createdAt: Instant;
+}
+
+export interface ResearchStep {
+  id: Uuid;
+  ordinal: number;
+  title: string;
+  goal: string;
+  plannedQueries: string[];
+  status: ResearchStepStatus;
+  statusDetail: string | null;
+  actionCount: number;
+  startedAt: Instant | null;
+  finishedAt: Instant | null;
+  toolCalls: ResearchToolCall[];
+}
+
+/** A gathered passage; `handle` (P1, P2, ...) is how the agent referred to it. */
+export interface ResearchSource {
+  handle: string;
+  documentId: Uuid;
+  chunkId: Uuid;
+  documentTitle: string;
+  pageNumber: number | null;
+  chunkIndex: number;
+  charStart: number;
+  charEnd: number;
+  score: number | null;
+  stepOrdinal: number;
+  toolCallSeq: number;
+  content: string;
+}
+
+export interface ResearchReport {
+  title: string;
+  /** Verified text: summary, then "## Heading" sections, with [n] markers. */
+  text: string;
+  partial: boolean;
+  citations: Citation[];
+}
+
+export interface ResearchRunSummary {
+  id: Uuid;
+  workspaceId: Uuid;
+  objective: string;
+  status: ResearchStatus;
+  statusDetail: string | null;
+  cancelRequested: boolean;
+  toolCallCount: number;
+  sourceCount: number;
+  reportTitle: string | null;
+  createdAt: Instant;
+  startedAt: Instant | null;
+  finishedAt: Instant | null;
+}
+
+export interface ResearchRunDetail extends Omit<ResearchRunSummary, "reportTitle"> {
+  resumeCount: number;
+  planOrigin: "MODEL" | "FALLBACK" | null;
+  model: string | null;
+  steps: ResearchStep[];
+  sources: ResearchSource[];
+  report: ResearchReport | null;
+  gaps: string[];
+  limits: { maxSteps: number; maxActionsPerStep: number; maxToolCalls: number; maxSources: number; maxDurationSeconds: number };
+}
+
+export const RESEARCH_LIMITS = { objectiveMin: 10, objectiveMax: 2000 } as const;

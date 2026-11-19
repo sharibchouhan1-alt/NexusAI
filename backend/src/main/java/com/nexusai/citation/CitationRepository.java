@@ -18,4 +18,10 @@ interface CitationRepository extends Repository<Citation, UUID> {
     @Modifying(flushAutomatically = true, clearAutomatically = true)
     @Query("delete from Citation c where c.workspaceId = :workspaceId and c.messageId = :messageId")
     void deleteForMessage(@Param("workspaceId") UUID workspaceId, @Param("messageId") UUID messageId);
+
+    List<Citation> findByWorkspaceIdAndResearchRunIdOrderByOrdinal(UUID workspaceId, UUID researchRunId);
+
+    @Modifying(flushAutomatically = true, clearAutomatically = true)
+    @Query("delete from Citation c where c.workspaceId = :workspaceId and c.researchRunId = :runId")
+    void deleteForResearchRun(@Param("workspaceId") UUID workspaceId, @Param("runId") UUID runId);
 }

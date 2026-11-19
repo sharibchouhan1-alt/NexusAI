@@ -28,6 +28,8 @@ import org.springframework.test.web.servlet.MockMvc;
         "nexusai.embedding.retry-interval=300ms",
         // The lexical test embedder's similarities are lower than real semantic ones.
         "nexusai.rag.min-score=0.05",
+        // A small run-wide tool budget so budget exhaustion is reachable in tests.
+        "nexusai.research.max-tool-calls=10",
 })
 public abstract class ApiTestSupport {
 

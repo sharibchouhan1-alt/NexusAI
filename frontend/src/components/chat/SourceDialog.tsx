@@ -50,21 +50,27 @@ export function SourceDialog({
   workspaceId,
   citation,
   onClose,
+  label,
+  note = "Snapshot of the passage the answer was generated from. Document text is treated as evidence, never as instructions.",
 }: {
   workspaceId: Uuid;
+  /** A verified citation; with an empty quote, the passage is shown without a quote. */
   citation: Citation;
   onClose: () => void;
+  /** Overrides the "[n]" prefix, e.g. a research source handle "P3". */
+  label?: string;
+  note?: string;
 }) {
   return (
     <Modal
       size="lg"
-      title={`[${citation.ordinal}] ${citation.documentTitle}`}
+      title={`${label ?? `[${citation.ordinal}]`} ${citation.documentTitle}`}
       description={
         <span className="flex flex-wrap gap-x-3 gap-y-1">
           {citation.pageNumber !== null && <span>Page {citation.pageNumber}</span>}
           <span>Chunk #{citation.chunkIndex + 1}</span>
           <span className="font-mono">chars {citation.charStart}–{citation.charEnd}</span>
-          <span>similarity {citation.score.toFixed(2)}</span>
+          {citation.score > 0 && <span>similarity {citation.score.toFixed(2)}</span>}
         </span>
       }
       onClose={onClose}
@@ -82,20 +88,20 @@ export function SourceDialog({
         </>
       }
     >
-      <div>
-        <p className="mb-1.5 text-xs font-medium tracking-wide text-zinc-500 uppercase">Verified quote</p>
-        <blockquote className="border-l-2 border-amber-400 pl-3 text-sm text-zinc-800 italic dark:text-zinc-200">
-          “{citation.quote}”
-        </blockquote>
-      </div>
+      {citation.quote && (
+        <div>
+          <p className="mb-1.5 text-xs font-medium tracking-wide text-zinc-500 uppercase">Verified quote</p>
+          <blockquote className="border-l-2 border-amber-400 pl-3 text-sm text-zinc-800 italic dark:text-zinc-200">
+            “{citation.quote}”
+          </blockquote>
+        </div>
+      )}
       <div>
         <p className="mb-1.5 text-xs font-medium tracking-wide text-zinc-500 uppercase">Source passage</p>
         <p className="max-h-[45vh] overflow-y-auto rounded-lg bg-zinc-50 p-3 text-sm leading-relaxed break-words whitespace-pre-wrap text-zinc-700 dark:bg-zinc-800/60 dark:text-zinc-300">
-          {highlight(citation.passage, citation.quote)}
+          {citation.quote ? highlight(citation.passage, citation.quote) : citation.passage}
         </p>
-        <p className="mt-1.5 text-xs text-zinc-400">
-          Snapshot of the passage the answer was generated from. Document text is treated as evidence, never as instructions.
-        </p>
+        <p className="mt-1.5 text-xs text-zinc-400">{note}</p>
       </div>
     </Modal>
   );

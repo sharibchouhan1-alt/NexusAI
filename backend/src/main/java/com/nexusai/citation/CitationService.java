@@ -35,7 +35,21 @@ public class CitationService {
     @Transactional(propagation = Propagation.MANDATORY)
     public void replace(UUID workspaceId, UUID messageId, List<CitationDraft> citations) {
         repository.deleteForMessage(workspaceId, messageId);
-        citations.forEach(c -> repository.save(new Citation(workspaceId, messageId, c)));
+        citations.forEach(c -> repository.save(Citation.forMessage(workspaceId, messageId, c)));
+    }
+
+    /** Replaces the citations of a research report. Joins the caller's transaction. */
+    @Transactional(propagation = Propagation.MANDATORY)
+    public void replaceForResearchRun(UUID workspaceId, UUID runId, List<CitationDraft> citations) {
+        repository.deleteForResearchRun(workspaceId, runId);
+        citations.forEach(c -> repository.save(Citation.forResearchRun(workspaceId, runId, c)));
+    }
+
+    @Transactional(readOnly = true)
+    public List<CitationView> forResearchRun(UUID workspaceId, UUID runId) {
+        return repository.findByWorkspaceIdAndResearchRunIdOrderByOrdinal(workspaceId, runId).stream()
+                .map(Citation::toView)
+                .toList();
     }
 
     @Transactional(readOnly = true)

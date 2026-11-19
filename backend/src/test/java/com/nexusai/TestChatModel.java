@@ -73,6 +73,13 @@ public class TestChatModel implements ChatModel {
         }
     }
 
+    /** Every user prompt received since the last reset, in order. */
+    public List<String> prompts() {
+        synchronized (calls) {
+            return List.copyOf(calls);
+        }
+    }
+
     @Override
     public ChatResponse call(Prompt prompt) {
         String system = prompt.getInstructions().stream().filter(m -> m.getMessageType().name().equals("SYSTEM"))

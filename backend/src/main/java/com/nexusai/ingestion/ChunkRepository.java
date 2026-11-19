@@ -173,6 +173,30 @@ class ChunkRepository {
         return matches.stream().sorted(java.util.Comparator.comparingDouble(ChunkSearch.ChunkMatch::distance)).toList();
     }
 
+    List<ChunkSearch.StoredChunk> withContext(UUID workspaceId, UUID chunkId, int window) {
+        return jdbc.sql("""
+                        SELECT n.id, n.document_id, n.chunk_index, n.page_number, n.char_start, n.char_end, n.content
+                          FROM document_chunks c
+                          JOIN document_chunks n
+                            ON n.document_id = c.document_id AND n.workspace_id = c.workspace_id
+                           AND n.chunk_index BETWEEN c.chunk_index - :window AND c.chunk_index + :window
+                         WHERE c.id = :chunkId AND c.workspace_id = :workspaceId
+                         ORDER BY n.chunk_index
+                        """)
+                .param("chunkId", chunkId)
+                .param("workspaceId", workspaceId)
+                .param("window", window)
+                .query((rs, row) -> new ChunkSearch.StoredChunk(
+                        rs.getObject("id", UUID.class),
+                        rs.getObject("document_id", UUID.class),
+                        rs.getInt("chunk_index"),
+                        rs.getObject("page_number", Integer.class),
+                        rs.getInt("char_start"),
+                        rs.getInt("char_end"),
+                        rs.getString("content")))
+                .list();
+    }
+
     static String toVectorLiteral(float[] vector) {
         StringBuilder sb = new StringBuilder(vector.length * 12).append('[');
         for (int i = 0; i < vector.length; i++) {

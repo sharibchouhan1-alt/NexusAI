@@ -4,7 +4,7 @@ import com.nexusai.citation.CitableSource;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.regex.Pattern;
+import com.nexusai.platform.ai.UntrustedText;
 
 /**
  * Context assembly: turns the selected passages into a prompt. Document text is untrusted
@@ -39,9 +39,6 @@ final class PromptBuilder {
     /** JSON schema passed to Ollama's structured-output mode. */
     static final Map<String, Object> ANSWER_SCHEMA = schema();
 
-    private static final Pattern DELIMITER_LOOKALIKE =
-            Pattern.compile("<\\s*/?\\s*(sources?|question|history|system|instructions?)\\b[^>]*>", Pattern.CASE_INSENSITIVE);
-
     private PromptBuilder() {
     }
 
@@ -67,11 +64,11 @@ final class PromptBuilder {
 
     /** Removes tag look-alikes that could close a block or fake a new one. */
     static String neutralize(String text) {
-        return DELIMITER_LOOKALIKE.matcher(text).replaceAll("[removed tag]");
+        return UntrustedText.neutralize(text);
     }
 
     private static String attribute(String value) {
-        return neutralize(value).replace("\"", "'").replace('\n', ' ');
+        return UntrustedText.attribute(value);
     }
 
     private static Map<String, Object> schema() {

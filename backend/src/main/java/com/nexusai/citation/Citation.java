@@ -19,8 +19,13 @@ class Citation {
     @GeneratedValue(strategy = GenerationType.UUID)
     private UUID id;
 
-    @Column(nullable = false, updatable = false)
+    /** Owner: a chat answer, or ... */
+    @Column(updatable = false)
     private UUID messageId;
+
+    /** ... a research report. Exactly one owner is set (database check). */
+    @Column(updatable = false)
+    private UUID researchRunId;
 
     @Column(nullable = false, updatable = false)
     private UUID workspaceId;
@@ -68,9 +73,20 @@ class Citation {
     protected Citation() {
     }
 
-    Citation(UUID workspaceId, UUID messageId, CitationDraft d) {
+    static Citation forMessage(UUID workspaceId, UUID messageId, CitationDraft d) {
+        Citation c = new Citation(workspaceId, d);
+        c.messageId = messageId;
+        return c;
+    }
+
+    static Citation forResearchRun(UUID workspaceId, UUID researchRunId, CitationDraft d) {
+        Citation c = new Citation(workspaceId, d);
+        c.researchRunId = researchRunId;
+        return c;
+    }
+
+    private Citation(UUID workspaceId, CitationDraft d) {
         this.workspaceId = workspaceId;
-        this.messageId = messageId;
         this.ordinal = d.ordinal();
         this.documentId = d.documentId();
         this.chunkId = d.chunkId();

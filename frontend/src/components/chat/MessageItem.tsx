@@ -1,41 +1,12 @@
 "use client";
 
-import { Fragment, useEffect, useState } from "react";
+import { useEffect, useState } from "react";
 import type { ChatMessage, Citation } from "@/lib/api/types";
 import { Button } from "@/components/ui/Button";
 import { AlertIcon, FileIcon, RefreshIcon } from "@/components/ui/icons";
 import { Spinner } from "@/components/ui/states";
+import { CitedText } from "./CitedText";
 
-const MARKER = /\[(\d+)\]/g;
-
-/** Plain-text answer with [n] markers turned into buttons; never rendered as HTML. */
-function AnswerText({ text, citations, onCite }: { text: string; citations: Citation[]; onCite: (c: Citation) => void }) {
-  const byOrdinal = new Map(citations.map((c) => [c.ordinal, c]));
-  const parts: React.ReactNode[] = [];
-  let last = 0;
-  for (const match of text.matchAll(MARKER)) {
-    const citation = byOrdinal.get(Number(match[1]));
-    parts.push(<Fragment key={`t${last}`}>{text.slice(last, match.index)}</Fragment>);
-    parts.push(
-      citation ? (
-        <button
-          key={`c${match.index}`}
-          type="button"
-          onClick={() => onCite(citation)}
-          aria-label={`Source ${citation.ordinal}: ${citation.documentTitle}${citation.pageNumber !== null ? `, page ${citation.pageNumber}` : ""}`}
-          className="mx-0.5 inline-flex h-5 min-w-5 -translate-y-0.5 items-center justify-center rounded bg-indigo-100 px-1 align-middle text-[11px] font-semibold text-indigo-700 hover:bg-indigo-200 focus-visible:outline-2 focus-visible:outline-indigo-600 dark:bg-indigo-500/20 dark:text-indigo-200 dark:hover:bg-indigo-500/30"
-        >
-          {citation.ordinal}
-        </button>
-      ) : (
-        <Fragment key={`m${match.index}`}>{match[0]}</Fragment>
-      ),
-    );
-    last = (match.index ?? 0) + match[0].length;
-  }
-  parts.push(<Fragment key="tail">{text.slice(last)}</Fragment>);
-  return <p className="leading-relaxed break-words whitespace-pre-wrap">{parts}</p>;
-}
 
 function Elapsed({ since }: { since: number }) {
   const [now, setNow] = useState(since);
@@ -82,7 +53,7 @@ export function MessageItem({ message, pendingSince, canRetry, retrying, onRetry
 
         {message.status === "COMPLETE" && (
           <div className="rounded-2xl rounded-bl-md border border-zinc-200 bg-white px-4 py-3 dark:border-zinc-800 dark:bg-zinc-900">
-            <AnswerText text={message.content} citations={message.citations} onCite={onCite} />
+            <CitedText text={message.content} citations={message.citations} onCite={onCite} />
             {message.citations.length > 0 && (
               <div className="mt-3 border-t border-zinc-100 pt-2.5 dark:border-zinc-800">
                 <p className="mb-1.5 text-xs font-medium text-zinc-500">Sources</p>

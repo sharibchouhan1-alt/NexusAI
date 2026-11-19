@@ -91,3 +91,15 @@ nexusai:
     max-context-chars: ${RAG_MAX_CONTEXT_CHARS:12000}
     min-quote-chars: ${RAG_MIN_QUOTE_CHARS:12}   # citation quotes shorter than this can't verify a claim
     history-questions: ${RAG_HISTORY_QUESTIONS:3}
+  research:
+    # Hard bounds: every research run terminates.
+    max-steps: ${RESEARCH_MAX_STEPS:4}
+    max-actions-per-step: ${RESEARCH_MAX_ACTIONS_PER_STEP:4}
+    max-tool-calls: ${RESEARCH_MAX_TOOL_CALLS:20}
+    max-sources: ${RESEARCH_MAX_SOURCES:40}
+    max-duration: ${RESEARCH_MAX_DURATION:10m}
+    synthesis-max-sources: ${RESEARCH_SYNTHESIS_MAX_SOURCES:12}
+    synthesis-max-chars: ${RESEARCH_SYNTHESIS_MAX_CHARS:12000}
+    max-resumes: ${RESEARCH_MAX_RESUMES:2}
+    worker-threads: ${RESEARCH_WORKER_THREADS:1}
+    queue-capacity: ${RESEARCH_QUEUE_CAPACITY:20}

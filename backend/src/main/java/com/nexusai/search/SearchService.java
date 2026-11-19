@@ -40,15 +40,23 @@ public class SearchService {
         // Workspace check first: a missing workspace is a 404 even when Ollama is down.
         SearchCoverage coverage = documents.searchCoverage(workspaceId);
         String text = query.strip();
-
-        float[] vector;
         try {
-            vector = embeddings.embedQuery(text);
+            return new SearchResponse(text, embeddings.modelId(), retrieve(workspaceId, text, limit), coverage);
         } catch (EmbeddingUnavailableException e) {
             throw new ServiceUnavailableException("Semantic search is temporarily unavailable: " + e.getMessage(),
                     embeddingProperties.retryInterval(), e);
         }
+    }
 
+    /**
+     * Published retrieval for other modules (e.g. RAG): the {@code limit} passages of the
+     * workspace most similar to {@code query}, most similar first, with provenance. The
+     * caller has already established that the workspace exists and may be accessed.
+     *
+     * @throws EmbeddingUnavailableException if the query cannot be embedded right now
+     */
+    public List<SearchResponse.Result> retrieve(UUID workspaceId, String query, int limit) {
+        float[] vector = embeddings.embedQuery(query.strip());
         List<ChunkMatch> matches = chunks.nearest(workspaceId, embeddings.modelId(), vector, limit);
         Map<UUID, DocumentSummary> summaries = documents.summaries(workspaceId,
                 matches.stream().map(ChunkMatch::documentId).collect(Collectors.toSet()));
@@ -63,6 +71,6 @@ public class SearchService {
                     doc.id(), doc.title(), doc.origin(), doc.mediaType(),
                     m.chunkId(), m.chunkIndex(), m.pageNumber(), m.charStart(), m.charEnd(), m.content()));
         }
-        return new SearchResponse(text, embeddings.modelId(), results, coverage);
+        return results;
     }
 }

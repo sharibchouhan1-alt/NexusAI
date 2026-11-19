@@ -20,22 +20,29 @@ spring:
     locations: classpath:db/migration
   ai:
     model:
-      chat: none            # no LLM: only the embedding model is used
+      chat: ollama
       embedding: ollama
     ollama:
       base-url: ${OLLAMA_BASE_URL:http://localhost:11434}
       init:
-        pull-model-strategy: never   # pull the model yourself: ollama pull nomic-embed-text
+        pull-model-strategy: never   # pull models yourself: ollama pull nomic-embed-text / qwen2.5:7b
+      # Spring AI 2.0 property names (the older *.options.* keys are deprecated).
       embedding:
-        options:
-          model: ${EMBEDDING_MODEL:nomic-embed-text}
+        model: ${EMBEDDING_MODEL:nomic-embed-text}
+      chat:
+        model: ${CHAT_MODEL:qwen2.5:7b}
+        temperature: ${CHAT_TEMPERATURE:0.1}   # grounded answers: little creativity
+        seed: ${CHAT_SEED:42}
+        num-ctx: ${CHAT_CONTEXT_TOKENS:8192}   # Ollama's default window would truncate the sources
+        num-predict: ${CHAT_MAX_TOKENS:800}    # bounds answer length and generation time
+        keep-alive: ${CHAT_KEEP_ALIVE:10m}
     retry:
       # NexusAI retries unavailable embedding work itself (see nexusai.embedding.retry-interval).
       max-attempts: 1
   http:
     clients:
       connect-timeout: ${OLLAMA_CONNECT_TIMEOUT:2s}
-      read-timeout: ${OLLAMA_READ_TIMEOUT:60s}
+      read-timeout: ${OLLAMA_READ_TIMEOUT:120s}   # bounds a local generation (cold load + answer)
   servlet:
     multipart:
       # Uploads beyond this size are rejected with 413 before reaching application code.
@@ -44,6 +51,12 @@ spring:
 
 server:
   port: ${SERVER_PORT:8080}
+
+logging:
+  level:
+    # Spring AI's reactive client stack logs a benign ERROR on macOS about an optional native
+    # DNS resolver (it falls back to the JDK resolver; Ollama is reached on localhost).
+    io.netty.resolver.dns.DnsServerAddressStreamProviders: "OFF"
 
 nexusai:
   cors:
@@ -72,3 +85,9 @@ nexusai:
   search:
     default-limit: ${SEARCH_DEFAULT_LIMIT:10}
     max-limit: ${SEARCH_MAX_LIMIT:50}
+  rag:
+    top-k: ${RAG_TOP_K:6}                        # passages given to the model as evidence
+    min-score: ${RAG_MIN_SCORE:0.5}              # below this similarity a passage is not evidence
+    max-context-chars: ${RAG_MAX_CONTEXT_CHARS:12000}
+    min-quote-chars: ${RAG_MIN_QUOTE_CHARS:12}   # citation quotes shorter than this can't verify a claim
+    history-questions: ${RAG_HISTORY_QUESTIONS:3}

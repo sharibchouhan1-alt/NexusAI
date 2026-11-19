@@ -9,7 +9,7 @@ import { formatDateTime } from "@/lib/format";
 import { useResource } from "@/lib/hooks/useResource";
 import { Button } from "@/components/ui/Button";
 import { ConfirmDialog } from "@/components/ui/ConfirmDialog";
-import { ChevronLeftIcon, FolderIcon, PencilIcon, TrashIcon } from "@/components/ui/icons";
+import { ChatIcon, ChevronLeftIcon, FolderIcon, PencilIcon, TrashIcon } from "@/components/ui/icons";
 import { EmptyState, ErrorState, LoadingState } from "@/components/ui/states";
 import { PageHeader } from "@/components/layout/PageHeader";
 import { DocumentsPanel } from "@/components/documents/DocumentsPanel";
@@ -76,6 +76,12 @@ export function WorkspaceDetail({ params }: { params: Promise<{ workspaceId: str
         }
         actions={
           <>
+            <Link
+              href={`/workspaces/${workspace.id}/chat`}
+              className="inline-flex h-9 items-center gap-2 rounded-md bg-indigo-600 px-3.5 text-sm font-medium text-white shadow-sm hover:bg-indigo-500 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-600 dark:bg-indigo-500 dark:hover:bg-indigo-400"
+            >
+              <ChatIcon /> Chat
+            </Link>
             <Button variant="secondary" icon={<PencilIcon />} onClick={() => setDialog("edit")}>
               Edit
             </Button>

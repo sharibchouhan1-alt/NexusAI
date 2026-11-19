@@ -56,6 +56,12 @@ export const AlertIcon = (p: IconProps) => (
 export const HomeIcon = (p: IconProps) => (
   <Icon {...p}><path d="M3 11 12 4l9 7" /><path d="M5 10v10h14V10" /></Icon>
 );
+export const ChatIcon = (p: IconProps) => (
+  <Icon {...p}><path d="M4 5h16v11H8l-4 4z" /></Icon>
+);
+export const SendIcon = (p: IconProps) => (
+  <Icon {...p}><path d="M5 12h13M13 6l6 6-6 6" /></Icon>
+);
 export const SearchIcon = (p: IconProps) => (
   <Icon {...p}><circle cx="11" cy="11" r="7" /><path d="m20 20-3.5-3.5" /></Icon>
 );

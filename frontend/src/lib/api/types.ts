@@ -164,3 +164,74 @@ export const UPLOAD_EXTENSIONS = [".pdf", ".txt"] as const;
 
 /** Same pattern as CreateDocumentRequest.mediaType. */
 export const MEDIA_TYPE_PATTERN = /^[\w.+-]+\/[\w.+-]+$/;
+
+// --- Chat module (com.nexusai.chat.ChatDtos) and Citation module ---
+
+/** com.nexusai.citation.CitationView: verified evidence behind an answer. */
+export interface Citation {
+  /** The [n] marker number in the answer text. */
+  ordinal: number;
+  sourceKind: "DOCUMENT_CHUNK";
+  documentId: Uuid;
+  chunkId: Uuid;
+  documentTitle: string;
+  /** 1-based PDF page; null for plain text. */
+  pageNumber: number | null;
+  chunkIndex: number;
+  charStart: number;
+  charEnd: number;
+  /** Verified to occur in `passage`. */
+  quote: string;
+  /** The cited chunk text as it was when the answer was produced. */
+  passage: string;
+  /** Retrieval similarity of the passage to the question. */
+  score: number;
+}
+
+/** com.nexusai.chat.MessageStatus */
+export type MessageStatus = "COMPLETE" | "PENDING" | "ABSTAINED" | "FAILED";
+
+/** com.nexusai.chat.ChatDtos.MessageView */
+export interface ChatMessage {
+  id: Uuid;
+  conversationId: Uuid;
+  role: "USER" | "ASSISTANT";
+  /** Question, verified answer with [n] markers, or the abstention text. */
+  content: string;
+  status: MessageStatus;
+  /** Why an answer abstained or failed. */
+  statusDetail: string | null;
+  model: string | null;
+  retrievedCount: number | null;
+  latencyMs: number | null;
+  createdAt: Instant;
+  citations: Citation[];
+}
+
+/** com.nexusai.chat.ChatDtos.ConversationSummary */
+export interface ConversationSummary {
+  id: Uuid;
+  workspaceId: Uuid;
+  title: string;
+  messageCount: number;
+  createdAt: Instant;
+  updatedAt: Instant;
+}
+
+/** com.nexusai.chat.ChatDtos.ConversationDetail */
+export interface ConversationDetail {
+  id: Uuid;
+  workspaceId: Uuid;
+  title: string;
+  createdAt: Instant;
+  updatedAt: Instant;
+  messages: ChatMessage[];
+}
+
+/** com.nexusai.chat.ChatDtos.TurnResponse */
+export interface Turn {
+  question: ChatMessage;
+  answer: ChatMessage;
+}
+
+export const CHAT_LIMITS = { question: 4000, title: 200 } as const;

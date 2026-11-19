@@ -26,6 +26,8 @@ import org.springframework.test.web.servlet.MockMvc;
 @TestPropertySource(properties = {
         ApiTestSupport.TEST_STORAGE_ROOT,
         "nexusai.embedding.retry-interval=300ms",
+        // The lexical test embedder's similarities are lower than real semantic ones.
+        "nexusai.rag.min-score=0.05",
 })
 public abstract class ApiTestSupport {
 

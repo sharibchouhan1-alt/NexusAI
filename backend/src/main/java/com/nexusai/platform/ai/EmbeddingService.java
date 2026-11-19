@@ -24,7 +24,7 @@ public class EmbeddingService {
     private final String modelId;
 
     public EmbeddingService(EmbeddingModel model, EmbeddingProperties properties,
-                            @Value("${spring.ai.ollama.embedding.options.model}") String modelName) {
+                            @Value("${spring.ai.ollama.embedding.model}") String modelName) {
         this.model = model;
         this.properties = properties;
         this.modelId = "ollama:" + modelName;

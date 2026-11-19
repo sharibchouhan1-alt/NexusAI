@@ -3,7 +3,7 @@
 AI Knowledge & Research Agent Platform. The approved architecture lives in
 [docs/architecture/](docs/architecture/).
 
-## Current status — Phase 5
+## Current status — Phase 6
 
 - Spring Boot 4.1 / Java 21 backend (modular monolith) in [backend/](backend/)
 - PostgreSQL 17 + pgvector via Docker Compose, Flyway migrations
@@ -12,11 +12,16 @@ AI Knowledge & Research Agent Platform. The approved architecture lives in
   page/offset provenance in PostgreSQL, with processing status
 - Local semantic search: chunk embeddings from Ollama `nomic-embed-text` (768-d, via
   Spring AI) stored in pgvector; workspace-scoped nearest-passage search with provenance
+- Local RAG chat: workspace-scoped conversations with persisted messages; answers from a
+  local Ollama model (`qwen2.5:7b`) grounded in retrieved passages, with **verified
+  citations** (document, chunk, page, character range, exact quote). It abstains when the
+  evidence is insufficient.
 - Next.js 16 / React 19 / Tailwind 4 frontend in [frontend/](frontend/): workspaces,
-  documents, uploads with progress, ingestion/index status, chunk viewer, search
+  documents, uploads with progress, ingestion/index status, chunk viewer, search, chat
+  with clickable sources
 
-Not yet implemented: authentication/authorization, RAG / generated answers (search
-returns passages only; no LLM is called).
+Not yet implemented: authentication/authorization, streaming answers, agents/research,
+memory.
 
 > **Do not expose this to a network you don't control.** There is no authentication yet:
 > anyone who can reach the API can read, upload and delete any workspace's documents.
@@ -25,15 +30,21 @@ returns passages only; no LLM is called).
 ## Prerequisites
 
 Java 21, Maven 3.9+, Node.js 20+, Docker with Compose, and [Ollama](https://ollama.com)
-running locally with the embedding model pulled (free, no API keys):
+running locally with both models pulled (free, no API keys):
 
 ```bash
-ollama pull nomic-embed-text   # Ollama must be running on localhost:11434
+ollama pull nomic-embed-text   # embeddings, ~0.3 GB
+ollama pull qwen2.5:7b         # chat answers, ~4.7 GB (Q4); comfortable on a 16 GB Mac
 ```
 
-Without Ollama everything except search keeps working: uploads are extracted and chunked,
-documents wait for embeddings ("Waiting for Ollama") and are indexed automatically once
-it is reachable; the search API answers 503 with `Retry-After`.
+`qwen2.5:7b` was chosen for reliable instruction-following and JSON output at a size that
+fits next to Docker, the JVM and an IDE in 16 GB. On machines with less memory use
+`CHAT_MODEL=qwen2.5:3b` (~1.9 GB), though citations will be less reliable.
+
+Without Ollama, uploads still work: files are extracted and chunked, documents wait for
+embeddings ("Waiting for Ollama") and are indexed automatically once it is reachable.
+Search answers 503 with `Retry-After`. Chat answers are stored as FAILED with the reason
+and can be retried.
 
 ## Run locally
 
@@ -86,6 +97,12 @@ precedence.
 | `EMBEDDING_RETRY_INTERVAL` | `30s` | Retry cadence for documents waiting on Ollama |
 | `OLLAMA_CONNECT_TIMEOUT` / `OLLAMA_READ_TIMEOUT` | `2s` / `60s` | HTTP timeouts to Ollama |
 | `SEARCH_DEFAULT_LIMIT` / `SEARCH_MAX_LIMIT` | `10` / `50` | Results per query |
+| `CHAT_MODEL` | `qwen2.5:7b` | Local Ollama instruct model for answers |
+| `CHAT_TEMPERATURE` / `CHAT_SEED` | `0.1` / `42` | Low randomness for grounded answers |
+| `CHAT_CONTEXT_TOKENS` / `CHAT_MAX_TOKENS` | `8192` / `800` | Model context window / answer length cap |
+| `RAG_TOP_K` / `RAG_MIN_SCORE` | `6` / `0.5` | Passages offered as evidence / similarity threshold |
+| `RAG_MAX_CONTEXT_CHARS` / `RAG_MIN_QUOTE_CHARS` | `12000` / `12` | Evidence budget / shortest verifiable quote |
+| `OLLAMA_READ_TIMEOUT` | `120s` | Bounds one generation; beyond it the answer fails as retryable |
 
 Example response:
 
@@ -110,6 +127,17 @@ Returns `503` with `"status":"DOWN"` if the database is unreachable or pgvector 
 | `POST` | `/api/workspaces/{workspaceId}/documents/{documentId}/ingestion` | 202: re-run ingestion |
 | `POST` | `/api/workspaces/{workspaceId}/documents/{documentId}/embeddings` | 202: re-run indexing now |
 | `GET` | `/api/workspaces/{workspaceId}/search?q=...&limit=10` | 200: ranked passages; 503 if Ollama is down |
+
+| `POST` / `GET` | `/api/workspaces/{workspaceId}/conversations` | 201 / 200 (paged, recent first) |
+| `GET` / `PUT` / `DELETE` | `/api/workspaces/{workspaceId}/conversations/{conversationId}` | 200 (with messages + citations) / 200 / 204 |
+| `POST` | `/api/workspaces/{workspaceId}/conversations/{conversationId}/messages` | 201: `{question, answer}` once answered; 409 while one is pending |
+| `POST` | `/api/workspaces/{workspaceId}/conversations/{conversationId}/messages/{messageId}/retry` | 200: regenerate a FAILED answer |
+
+An answer's `status` is `COMPLETE` (grounded, with `citations`), `ABSTAINED` (fixed
+"couldn't find enough evidence" text plus a `statusDetail` reason), or `FAILED` (retryable:
+model or search unavailable, timeout, malformed output). Each citation has `{ordinal,
+documentId, chunkId, documentTitle, pageNumber, chunkIndex, charStart, charEnd, quote,
+passage, score}`. `ordinal` matches the `[n]` marker in the answer text.
 
 Search response: `{query, model, coverage: {indexed, pending, failed}, results: [{rank, score,
 documentId, documentTitle, documentOrigin, mediaType, chunkId, chunkIndex, pageNumber,
@@ -155,6 +183,37 @@ through the wrong workspace returns the same 404 as a missing one.
 - **Workspace isolation:** chunks carry `workspace_id`. A composite foreign key to
   `documents (id, workspace_id)` makes it impossible to attach a chunk to another
   workspace's document.
+
+### RAG chat and citation design
+
+- **Modules:** Chat (conversations, messages, turn order) → RAG (retrieval via Search's
+  published `retrieve`, context assembly, generation) → Citation (verification and storage
+  of evidence links). Spring AI chat types appear only in `platform.ai.GenerationService`.
+- **A turn** is two short transactions around the model call. First the conversation is
+  locked and the question and a `PENDING` answer are stored. Then RAG runs with no
+  transaction open. Finally the outcome and its citations are stored. One answer per
+  conversation is in flight at a time (409 otherwise). Answers left `PENDING` by a restart
+  become `FAILED` and can be retried.
+- **Context assembly:** the top `RAG_TOP_K` passages at or above `RAG_MIN_SCORE`, within
+  `RAG_MAX_CONTEXT_CHARS`. If none qualify, the turn abstains without calling the model.
+- **Untrusted documents:** passages are placed in numbered `<source>` blocks. Anything in
+  them that looks like a delimiter (`<source>`, `<question>`, `<system>`…) is neutralized.
+  The system prompt says sources are data and instructions inside them must never be
+  followed. Answers are rendered as plain text (never HTML).
+- **Structured output:** Ollama is constrained to the JSON schema
+  `{answerable, answer, citations: [{source, quote}]}`.
+- **Verification:** each claimed citation must name a source that was actually provided,
+  and its quote (≥ `RAG_MIN_QUOTE_CHARS`) must occur in that passage, ignoring case,
+  whitespace and quote styles; elided quotes must match segment by segment. Unverified
+  citations are dropped and their `[n]` markers removed, and the rest are renumbered.
+- **Abstention:** the model said the sources are insufficient, or nothing it cited could be
+  verified. Its text is then not shown; the fixed abstention text is returned instead.
+- **Evidence is stored, not reconstructed:** each citation snapshots the passage, so past
+  answers stay auditable after their document is re-ingested or deleted. Deleting a
+  conversation cascades to its messages and citations, and deleting a workspace cascades
+  to its conversations.
+- **Answers are not streamed:** an answer is verified as a whole before display, so
+  token-by-token SSE streaming is deferred. The UI shows progress while it waits.
 
 ### Embeddings and search design
 
@@ -207,6 +266,17 @@ mvn verify
   shares no keywords with the expected passage. Skipped automatically if Ollama or the
   model is unavailable.
 - `EmbeddingServiceTest`: prefixes, error translation, vector contract
+- `ChatApiIntegrationTest`: grounded answers with exact document/chunk/page provenance,
+  persistence and history, workspace isolation (API and prompt contents), abstention (no
+  evidence, model says insufficient, fabricated citations), partial verification, model
+  outage, timeout, malformed output and embedding outage with retry, one answer at a time,
+  restart recovery, validation, cascades, and citations surviving document deletion. Uses
+  a deterministic test-only chat model.
+- `CitationValidatorTest`, `PromptAndParsingTest`: verification rules, marker renumbering,
+  delimiter-injection neutralization, tolerant JSON parsing
+- `OllamaRagChatTest`: end to end with the **real** `qwen2.5:7b`. It checks a cited
+  grounded answer, an abstention on an off-topic question, and that a planted "ignore
+  previous instructions" is not obeyed. Skipped automatically if the models are missing.
 - Unit tests: `TextChunkerTest`, `TextExtractorTest` (generated PDFs: multi-page,
   encrypted, image-only, corrupt), `UploadInspectorTest`, `LocalFileStorageTest` (path
   traversal, permissions)
@@ -225,7 +295,10 @@ backend/src/main/java/com/nexusai/
   document/                 # Documents, uploads, lifecycle; uses WorkspaceService only
   ingestion/                # extraction, chunking, chunks + embeddings, indexing; uses DocumentService
   search/                   # semantic search API; uses EmbeddingService, ChunkSearch, DocumentService
-  platform/ai/              # EmbeddingService: Spring AI / Ollama adapter
+  platform/ai/              # EmbeddingService, GenerationService: Spring AI / Ollama adapters
+  chat/                     # conversations, messages, turns; uses RagService, CitationService
+  rag/                      # retrieval → context assembly → generation → verification
+  citation/                 # citation verification and persistence (evidence linkage)
 backend/src/main/resources/
   application.yml
   db/migration/             # Flyway, versioned and forward-only

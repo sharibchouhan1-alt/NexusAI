@@ -1,0 +1,19 @@
+# All environment-specific values come from environment variables (see ../.env.example).
+# A local .env file (repo root or backend/) is imported automatically if present.
+spring:
+  application:
+    name: nexusai-backend
+  config:
+    import:
+      - optional:file:.env[.properties]
+      - optional:file:../.env[.properties]
+  datasource:
+    url: jdbc:postgresql://${DB_HOST:localhost}:${DB_PORT:5432}/${DB_NAME:nexusai}
+    username: ${DB_USER:nexusai}
+    password: ${DB_PASSWORD:}
+  flyway:
+    enabled: true
+    locations: classpath:db/migration
+
+server:
+  port: ${SERVER_PORT:8080}

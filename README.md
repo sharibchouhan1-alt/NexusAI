@@ -3,28 +3,45 @@
 AI Knowledge & Research Agent Platform. The approved architecture lives in
 [docs/architecture/](docs/architecture/).
 
-## Current status — Phase 1
+## Current status — Phase 3
 
 - Spring Boot 4.1 / Java 21 backend (modular monolith) in [backend/](backend/)
-- PostgreSQL 17 + pgvector via Docker Compose
-- Flyway migrations (`V1` enables the `vector` extension)
-- `GET /api/health` — reports app status, database connectivity and pgvector version
+- PostgreSQL 17 + pgvector via Docker Compose, Flyway migrations
+- Workspace and document-metadata REST APIs
+- Next.js 16 / React 19 / Tailwind 4 frontend in [frontend/](frontend/): dashboard,
+  workspace and document management against the live API
 
-Not yet implemented: frontend, authentication, ingestion, RAG.
+Not yet implemented: authentication, file upload, ingestion, RAG.
 
 ## Prerequisites
 
-Java 21, Maven 3.9+, Docker with Compose.
+Java 21, Maven 3.9+, Node.js 20+, Docker with Compose.
 
 ## Run locally
 
 ```bash
 cp .env.example .env            # then set DB_PASSWORD
 docker compose up -d --wait     # starts postgres + pgvector
-cd backend
-mvn spring-boot:run             # Flyway migrates on startup
-curl localhost:8080/api/health
+
+# terminal 1: API on :8080 (Flyway migrates on startup)
+cd backend && mvn spring-boot:run
+
+# terminal 2: UI on :3000
+cd frontend && npm install && npm run dev
 ```
+
+Open http://localhost:3000. For a production build: `npm run build && npm start`.
+
+### Frontend configuration
+
+| Variable | Default | Purpose |
+| --- | --- | --- |
+| `NEXT_PUBLIC_API_BASE_URL` | `http://localhost:8080` | API base URL, inlined at build time (see `frontend/.env.example`) |
+
+The browser calls the API directly. The backend only accepts cross-origin requests from
+the origins in `CORS_ALLOWED_ORIGINS` (default `http://localhost:3000`, no credentials).
+
+Frontend checks: `npm run typecheck`, `npm run lint`, `npm run build`.
 
 The backend reads its configuration from environment variables. A `.env` file in the repo
 root (or in `backend/`) is imported automatically; real environment variables take
@@ -38,6 +55,7 @@ precedence.
 | `DB_USER` | `nexusai` | Database user |
 | `DB_PASSWORD` | — (required by Compose) | Database password |
 | `SERVER_PORT` | `8080` | HTTP port |
+| `CORS_ALLOWED_ORIGINS` | `http://localhost:3000` | Comma-separated browser origins allowed to call `/api/**` |
 
 Example response:
 
@@ -87,12 +105,17 @@ mvn verify
 backend/src/main/java/com/nexusai/
   NexusAiApplication.java
   platform/health/          # cross-cutting health check
-  platform/web/             # problem-details error handling, paging DTO
+  platform/web/             # problem-details errors, paging DTO, CORS
   workspace/                # Workspace module (entity/repository package-private)
   document/                 # Document metadata module; uses WorkspaceService only
 backend/src/main/resources/
   application.yml
   db/migration/             # Flyway, versioned and forward-only
+frontend/src/
+  app/                      # routes: / (dashboard), /workspaces/[workspaceId]
+  lib/api/                  # typed API client mirroring the backend DTOs
+  components/ui/            # buttons, fields, modal, states, pagination
+  components/{layout,workspaces,documents}/
 ```
 
 Business modules (`auth`, `user`, `workspace`, `document`, …) are added as packages under
